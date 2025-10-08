@@ -30,7 +30,7 @@ const port = process.env.PORT || 3001;
 // Configuração de CORS para Produção
 const allowedOrigins = [
     'http://localhost:5173', // Para desenvolvimento local
-    'https://integrandoser.integrandoser.com.br' // DOMÍNIO REAL CORRIGIDO
+    'https://integrandoser.com.br' // DOMÍNIO REAL CORRIGIDO
 ];
 
 const corsOptions = {
