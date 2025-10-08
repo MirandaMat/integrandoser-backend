@@ -1,0 +1,11 @@
+# Dependências
+/node_modules
+
+# Arquivos de upload dos usuários
+/uploads
+
+# Arquivo de variáveis de ambiente - NUNCA ENVIE SENHAS PARA O GITHUB
+.env
+
+# Arquivos de sistema do macOS
+.DS_Store

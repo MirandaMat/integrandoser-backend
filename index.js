@@ -30,11 +30,7 @@ const port = process.env.PORT || 3001;
 // Configuração de CORS para Produção
 const allowedOrigins = [
     'http://localhost:5173', // Para desenvolvimento local
-<<<<<<< HEAD
-    'https://integrandoser.com.br' // DOMÍNIO REAL CORRIGIDO
-=======
-    'https://integrandoser.com.br/' // DOMÍNIO REAL NA HOSTINGER
->>>>>>> 7ee004b (feat: Adiciona socket.io e atualiza CORS)
+    'https://integrandoser.integrandoser.com.br' // SEU DOMÍNIO DE PRODUÇÃO CORRETO
 ];
 
 const corsOptions = {
