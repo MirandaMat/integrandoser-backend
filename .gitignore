@@ -9,3 +9,5 @@
 
 # Arquivos de sistema do macOS
 .DS_Store
+.env
+node_modules/
