@@ -31,6 +31,7 @@ console.log("Railway forneceu PORT:", process.env.PORT);
 const port = process.env.PORT || 3001;
 
 // Configuração de CORS para Produção
+/*
 const allowedOrigins = [
     'http://localhost:5173', // Para desenvolvimento local
     'https://integrandoser.integrandoser.com.br' // SEU DOMÍNIO DE PRODUÇÃO CORRETO
@@ -48,13 +49,15 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+*/
 app.use(express.json());
 
 // Configuração do Servidor HTTP e Socket.IO
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
-        origin: allowedOrigins, // Usa a mesma lista de permissões
+        //origin: allowedOrigins, // Usa a mesma lista de permissões
+        origin: "*",
         methods: ["GET", "POST"]
     }
 });
