@@ -1,6 +1,6 @@
 // server/src/config/db.js
 const mariadb = require('mariadb');
-const dotenv = require('dotenv');
+//const dotenv = require('dotenv');
 
 dotenv.config();
 

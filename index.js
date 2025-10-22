@@ -1,7 +1,9 @@
 // server/index.js
+const dotenv = require('dotenv');
+dotenv.config();
+
 const express = require('express');
 const cors = require('cors');
-const dotenv = require('dotenv');
 const path = require('path');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
@@ -22,7 +24,7 @@ const dreamRoutes = require('./src/routes/dreamRoutes.js');
 const notificationsRoutes = require('./src/routes/notificationsRoutes.js');
 const calendarRoutes = require('./src/routes/calendarRoutes.js'); 
 
-dotenv.config();
+
 
 // FORÇANDO NOVO BUILD PARA O RAILWAY
 
