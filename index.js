@@ -30,7 +30,7 @@ const port = process.env.PORT || 3001;
 // Configuração de CORS para Produção
 const allowedOrigins = [
     'http://localhost:5173', // Para desenvolvimento local
-    'https://integrandoser.com.br' // SEU DOMÍNIO DE PRODUÇÃO CORRETO
+    'https://integrandoser.integrandoser.com.br' // SEU DOMÍNIO DE PRODUÇÃO CORRETO
 ];
 
 const corsOptions = {
@@ -81,6 +81,5 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Inicialização do Servidor
 httpServer.listen(port, () => {
-    // Forçando deploy novamente - 21/10/2025
-    console.log(`Servidor rodando na porta ${port}`);
+  console.log(`Servidor rodando na porta ${port}`);
 });
