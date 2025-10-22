@@ -24,6 +24,8 @@ const calendarRoutes = require('./src/routes/calendarRoutes.js');
 
 dotenv.config();
 
+// FORÇANDO NOVO BUILD PARA O RAILWAY
+
 const app = express();
 
 console.log("Railway forneceu PORT:", process.env.PORT);
