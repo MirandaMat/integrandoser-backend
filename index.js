@@ -89,6 +89,26 @@ app.use('/api/calendar', calendarRoutes);
 // Servir arquivos estáticos da pasta 'uploads'
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// --- START: Global Error Handlers ---
+
+// Catch unexpected errors happening during request processing
+process.on('uncaughtException', (error) => {
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  console.error('[FATAL] Uncaught Exception:', error);
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  // Optional: Gracefully shut down the server
+  // process.exit(1); 
+});
+
+// Catch errors from Promises that weren't handled (e.g., async function errors)
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  // Optional: Gracefully shut down the server
+  // process.exit(1);
+});
+
 // Inicialização do Servidor
 httpServer.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
