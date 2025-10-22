@@ -460,38 +460,59 @@ router.put('/tpt', protect, isAdmin, upload.single('about_image'), async (req, r
 router.get('/site', async (req, res) => {
     let conn;
     try {
+        // --- START: Added Logs ---
+        console.log('[GET /site] Attempting to get connection from pool...');
         conn = await pool.getConnection(); //
+        console.log('[GET /site] Connection obtained successfully.');
+        // --- END: Added Logs ---
+
+        // --- START: Added Logs ---
+        console.log('[GET /site] Executing query: SELECT content FROM site_content WHERE id = 1');
         const [result] = await conn.query("SELECT content FROM site_content WHERE id = 1"); //
+        console.log('[GET /site] Query executed. Result:', result ? 'Data found' : 'No data');
+        // --- END: Added Logs ---
         
-        let content = {}; // Inicia como objeto vazio por segurança
+        let content = {}; 
 
         if (result && result.content) {
             if (typeof result.content === 'string') {
-                // ---- INÍCIO DA CORREÇÃO ----
                 try {
-                    content = JSON.parse(result.content); // Tenta fazer o parse
+                    content = JSON.parse(result.content); //
+                     console.log('[GET /site] JSON parsed successfully.'); // Added Log
                 } catch (parseError) {
-                    console.error("ERRO CRÍTICO: Falha ao fazer parse do JSON do banco de dados para /api/content/site:", parseError); // Log específico
-                    // Se falhar, retorna um objeto vazio ou algum estado de erro, mas NÃO quebra
-                    content = { error: "Falha ao carregar conteúdo do site devido a dados inválidos." }; 
-                    // Considerar retornar um status 500 aqui também, se preferir indicar erro ao frontend
-                    // return res.status(500).json({ message: 'Erro interno ao processar conteúdo do site.' });
+                    console.error("[GET /site] CRITICAL ERROR parsing JSON:", parseError); // Modified Log
+                    content = { error: "Falha ao carregar conteúdo do site (JSON inválido)." }; 
                 }
-                // ---- FIM DA CORREÇÃO ----
             } else if (typeof result.content === 'object') {
-                 // Se já for um objeto (caso raro, dependendo do driver/DB), usa diretamente
                 content = result.content; //
+                console.log('[GET /site] Content is already an object.'); // Added Log
             }
-        } 
-        // Se !result ou !result.content, 'content' continua como {} (objeto vazio)
+        } else {
+             console.log('[GET /site] No content found in database result.'); // Added Log
+        }
 
-        res.json(content); // Envia o conteúdo (válido ou objeto de erro/vazio) //
+        console.log('[GET /site] Sending JSON response.'); // Added Log
+        res.json(content); //
 
-    } catch (dbError) { // Renomeado para dbError para clareza
-        console.error("Erro no banco de dados ao buscar conteúdo do site:", dbError); // Log específico do DB //
+    } catch (dbError) { 
+        // --- START: Modified Logs ---
+        console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+        // Log if the connection failed OR the query failed
+        if (!conn) {
+             console.error('[GET /site] CRITICAL ERROR getting connection from pool:', dbError);
+        } else {
+             console.error('[GET /site] CRITICAL ERROR executing query or during JSON processing:', dbError);
+        }
+        console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+         // --- END: Modified Logs ---
         res.status(500).json({ message: 'Erro no servidor ao buscar conteúdo do site.' }); //
     } finally {
-        if (conn) conn.release(); //
+        if (conn) {
+             console.log('[GET /site] Releasing database connection.'); // Added Log
+             conn.release(); //
+        } else {
+             console.log('[GET /site] No connection to release.'); // Added Log
+        }
     }
 });
 
