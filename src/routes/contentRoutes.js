@@ -460,22 +460,38 @@ router.put('/tpt', protect, isAdmin, upload.single('about_image'), async (req, r
 router.get('/site', async (req, res) => {
     let conn;
     try {
-        conn = await pool.getConnection();
-        const [result] = await conn.query("SELECT content FROM site_content WHERE id = 1");
+        conn = await pool.getConnection(); //
+        const [result] = await conn.query("SELECT content FROM site_content WHERE id = 1"); //
         
-        if (!result) {
-            // Se não houver conteúdo, retorna um objeto vazio para o frontend inicializar
-            return res.json({});
-        }
+        let content = {}; // Inicia como objeto vazio por segurança
 
-        const content = result.content ? (typeof result.content === 'string' ? JSON.parse(result.content) : result.content) : {};
-        res.json(content);
+        if (result && result.content) {
+            if (typeof result.content === 'string') {
+                // ---- INÍCIO DA CORREÇÃO ----
+                try {
+                    content = JSON.parse(result.content); // Tenta fazer o parse
+                } catch (parseError) {
+                    console.error("ERRO CRÍTICO: Falha ao fazer parse do JSON do banco de dados para /api/content/site:", parseError); // Log específico
+                    // Se falhar, retorna um objeto vazio ou algum estado de erro, mas NÃO quebra
+                    content = { error: "Falha ao carregar conteúdo do site devido a dados inválidos." }; 
+                    // Considerar retornar um status 500 aqui também, se preferir indicar erro ao frontend
+                    // return res.status(500).json({ message: 'Erro interno ao processar conteúdo do site.' });
+                }
+                // ---- FIM DA CORREÇÃO ----
+            } else if (typeof result.content === 'object') {
+                 // Se já for um objeto (caso raro, dependendo do driver/DB), usa diretamente
+                content = result.content; //
+            }
+        } 
+        // Se !result ou !result.content, 'content' continua como {} (objeto vazio)
 
-    } catch (error) {
-        console.error("Erro ao buscar conteúdo do site:", error);
-        res.status(500).json({ message: 'Erro ao buscar conteúdo do site.' });
+        res.json(content); // Envia o conteúdo (válido ou objeto de erro/vazio) //
+
+    } catch (dbError) { // Renomeado para dbError para clareza
+        console.error("Erro no banco de dados ao buscar conteúdo do site:", dbError); // Log específico do DB //
+        res.status(500).json({ message: 'Erro no servidor ao buscar conteúdo do site.' }); //
     } finally {
-        if (conn) conn.release();
+        if (conn) conn.release(); //
     }
 });
 
