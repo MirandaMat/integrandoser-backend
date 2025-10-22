@@ -81,5 +81,6 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Inicialização do Servidor
 httpServer.listen(port, () => {
-  console.log(`Servidor rodando na porta ${port}`);
+    // Forçando deploy novamente - 21/10/2025
+    console.log(`Servidor rodando na porta ${port}`);
 });
