@@ -25,6 +25,9 @@ const calendarRoutes = require('./src/routes/calendarRoutes.js');
 dotenv.config();
 
 const app = express();
+
+console.log("Railway forneceu PORT:", process.env.PORT);
+
 const port = process.env.PORT || 3001;
 
 // Configuração de CORS para Produção
