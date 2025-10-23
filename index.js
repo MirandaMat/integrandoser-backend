@@ -99,6 +99,6 @@ httpServer.on('error', (error) => { /* ... */ });
 httpServer.on('clientError', (err, socket) => { /* ... */ });
 
 // Start the server
-httpServer.listen(port, () => {
-  console.log(`Minimal server running on port ${port}`); // Modified log
+httpServer.listen(port, '0.0.0.0', () => {
+  console.log(`Minimal server running on port ${port} listening on 0.0.0.0`); // Modified log
 });
