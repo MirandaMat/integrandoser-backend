@@ -6,10 +6,11 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { createServer } = require('http');
-const { Server } = require('socket.io');
-const { initializeSocket, getUserSocket } = require('./src/socketHandlers.js');
+// const { Server } = require('socket.io'); // <-- Comment out Socket.IO Server
+// const { initializeSocket, getUserSocket } = require('./src/socketHandlers.js'); // <-- Comment out socket handlers
 
-// Importação de Todas as Rotas
+// --- Temporarily Comment Out ALL Route Imports ---
+/*
 const authRoutes = require('./src/routes/authRoutes.js');
 const usersRoutes = require('./src/routes/usersRoutes.js');
 const profileRoutes = require('./src/routes/profileRoutes.js');
@@ -22,25 +23,18 @@ const financeRoutes = require('./src/routes/financeRoutes');
 const notesRoutes = require('./src/routes/notesRoutes.js');
 const dreamRoutes = require('./src/routes/dreamRoutes.js');
 const notificationsRoutes = require('./src/routes/notificationsRoutes.js');
-const calendarRoutes = require('./src/routes/calendarRoutes.js'); 
-
-
-
-// FORÇANDO NOVO BUILD PARA O RAILWAY
+const calendarRoutes = require('./src/routes/calendarRoutes.js');
+*/
+// --- End Comment Out ---
 
 const app = express();
-
-console.log("Railway forneceu PORT:", process.env.PORT);
-
 const port = process.env.PORT || 3001;
 
-// Configuração de CORS para Produção
-
+// Keep CORS configuration
 const allowedOrigins = [
-    'http://localhost:5173', // Para desenvolvimento local
-    'https://integrandoser.integrandoser.com.br' // SEU DOMÍNIO DE PRODUÇÃO CORRETO
+    'http://localhost:5173',
+    'https://integrandoser.integrandoser.com.br'
 ];
-
 const corsOptions = {
     origin: function (origin, callback) {
         if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
@@ -51,41 +45,27 @@ const corsOptions = {
     },
     credentials: true
 };
-
 app.use(cors(corsOptions));
 
 app.use(express.json());
 
-// Configuração do Servidor HTTP e Socket.IO
+// Create the HTTP server (without Socket.IO for now)
 const httpServer = createServer(app);
+/* // <-- Comment out Socket.IO setup
 const io = new Server(httpServer, {
     cors: {
-        origin: allowedOrigins, // Usa a mesma lista de permissões
+        origin: allowedOrigins,
         methods: ["GET", "POST"],
         credentials: true
     }
 });
-
-httpServer.on('error', (error) => {
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  console.error('[FATAL] HTTP Server Error Event:', error);
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-});
-
-httpServer.on('clientError', (err, socket) => {
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  console.error('[FATAL] HTTP Client Error Event:', err);
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  // From Node.js docs: Ensure socket is destroyed after logging
-  socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); 
-});
-
 app.set('io', io);
 app.set('getUserSocket', getUserSocket);
-
 initializeSocket(io);
+*/ // <-- End Comment Out
 
-// Definição de Rotas da API
+// --- Temporarily Comment Out ALL API Routes ---
+/*
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/profile', profileRoutes);
@@ -98,32 +78,27 @@ app.use('/api/finance', financeRoutes);
 app.use('/api/notes', notesRoutes);
 app.use('/api/dreams', dreamRoutes);
 app.use('/api/notifications', notificationsRoutes);
-app.use('/api/calendar', calendarRoutes); 
+app.use('/api/calendar', calendarRoutes);
+*/
+// --- End Comment Out ---
 
-// Servir arquivos estáticos da pasta 'uploads'
+// --- Add a Simple Health Check Route ---
+app.get('/', (req, res) => {
+  console.log('[HEALTH CHECK] Root route / accessed.'); // Add log
+  res.status(200).send('Server is running OK!');
+});
+// --- End Health Check ---
+
+// Keep static files (if needed, otherwise comment out too)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// --- START: Global Error Handlers ---
+// Keep global error handlers
+process.on('uncaughtException', (error) => { /* ... */ });
+process.on('unhandledRejection', (reason, promise) => { /* ... */ });
+httpServer.on('error', (error) => { /* ... */ });
+httpServer.on('clientError', (err, socket) => { /* ... */ });
 
-// Catch unexpected errors happening during request processing
-process.on('uncaughtException', (error) => {
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  console.error('[FATAL] Uncaught Exception:', error);
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  // Optional: Gracefully shut down the server
-  // process.exit(1); 
-});
-
-// Catch errors from Promises that weren't handled (e.g., async function errors)
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  // Optional: Gracefully shut down the server
-  // process.exit(1);
-});
-
-// Inicialização do Servidor
+// Start the server
 httpServer.listen(port, () => {
-  console.log(`Servidor rodando na porta ${port}`);
+  console.log(`Minimal server running on port ${port}`); // Modified log
 });
