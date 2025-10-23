@@ -1,134 +1,134 @@
 // server/index.js
 const dotenv = require('dotenv');
-dotenv.config(); // Load environment variables first
+dotenv.config(); // Garante que o .env seja lido primeiro
 
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { createServer } = require('http');
-// const { Server } = require('socket.io'); // Socket.IO Server still commented out
-// const { initializeSocket, getUserSocket } = require('./src/socketHandlers.js'); // Socket handlers still commented out
+const { Server } = require('socket.io'); // <-- DESCOMENTADO
+const { initializeSocket, getUserSocket } = require('./src/socketHandlers.js'); // <-- DESCOMENTADO
 
-// --- Restore ALL Route Imports ---
+// --- Reativar TODAS as rotas ---
 const authRoutes = require('./src/routes/authRoutes.js');
 const usersRoutes = require('./src/routes/usersRoutes.js');
 const profileRoutes = require('./src/routes/profileRoutes.js');
 const agendaRoutes = require('./src/routes/agendaRoutes.js');
 const messagesRoutes = require('./src/routes/messagesRoutes.js');
-const contentRoutes = require('./src/routes/contentRoutes'); //
+const contentRoutes = require('./src/routes/contentRoutes');
 const triagemRoutes = require('./src/routes/triagemRoutes.js');
 const schedulingRoutes = require('./src/routes/schedulingRoutes.js');
-const financeRoutes = require('./src/routes/financeRoutes'); //
-const notesRoutes = require('./src/routes/notesRoutes.js'); //
-const dreamRoutes = require('./src/routes/dreamRoutes.js'); //
-const notificationsRoutes = require('./src/routes/notificationsRoutes.js'); //
-const calendarRoutes = require('./src/routes/calendarRoutes.js'); //
-// --- End Restore ---
+const financeRoutes = require('./src/routes/financeRoutes');
+const notesRoutes = require('./src/routes/notesRoutes.js');
+const dreamRoutes = require('./src/routes/dreamRoutes.js');
+const notificationsRoutes = require('./src/routes/notificationsRoutes.js');
+const calendarRoutes = require('./src/routes/calendarRoutes.js');
+// --- Fim da reativação ---
 
 const app = express();
-const port = process.env.PORT || 3001; // Use PORT from environment or fallback
+const port = process.env.PORT || 3001;
 
-// CORS configuration
+// Configuração do CORS
 const allowedOrigins = [
-    'http://localhost:5173', // Your local frontend
-    'https://integrandoser.integrandoser.com.br' // Your production frontend domain
+    'http://localhost:5173',
+    'https://integrandoser.integrandoser.com.br',
+    process.env.FRONTEND_URL // Adicione a URL do frontend do .env por segurança
 ];
+
 const corsOptions = {
     origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps, curl requests, or same-origin requests)
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) === -1) {
-            const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-            return callback(new Error(msg), false);
+        // Permitir requisições sem 'origin' (ex: Postman) ou de origens permitidas
+        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            console.warn(`CORS: Origem REJEITADA: ${origin}`); // Log de depuração
+            callback(new Error('Not allowed by CORS'));
         }
-        return callback(null, true);
     },
-    credentials: true // Important for cookies, authorization headers with HTTPS
+    credentials: true
 };
 app.use(cors(corsOptions));
-// Handle preflight requests for all routes
-app.options('*', cors(corsOptions));
 
-// Middleware to parse JSON bodies
 app.use(express.json());
 
-// Create the HTTP server
+// Criar o servidor HTTP
 const httpServer = createServer(app);
 
-/* // Socket.IO setup remains commented out for now
+// --- Reativar o Socket.IO ---
 const io = new Server(httpServer, {
     cors: {
-        origin: allowedOrigins,
+        origin: allowedOrigins, // Usa a mesma lista de origens
         methods: ["GET", "POST"],
         credentials: true
     }
 });
-app.set('io', io); // Store io instance for access in routes
-app.set('getUserSocket', getUserSocket); // Store getUserSocket function
-initializeSocket(io); // Initialize socket event listeners and middleware
-*/
+app.set('io', io); // Disponibiliza o 'io' para as rotas
+app.set('getUserSocket', getUserSocket); // Disponibiliza a função para as rotas
+initializeSocket(io); // Inicializa os handlers de conexão do socket
+// --- Fim da reativação do Socket.IO ---
 
-// --- Restore ALL API Routes ---
-app.use('/api/auth', authRoutes); //
+// --- Rota de Health Check ---
+// Útil para verificar se o servidor está no ar
+app.get('/', (req, res) => {
+  console.log('[HEALTH CHECK] Rota / acessada. Servidor está operacional.');
+  res.status(200).send('Servidor IntegrandoSer está operacional!');
+});
+// --- Fim do Health Check ---
+
+// --- Reativar Rotas da API ---
+// O Express usará estas rotas agora
+app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/profile', profileRoutes);
-app.use('/api/agenda', agendaRoutes); //
-app.use('/api/messages', messagesRoutes); //
-app.use('/api/content', contentRoutes); //
+app.use('/api/agenda', agendaRoutes);
+app.use('/api/messages', messagesRoutes);
+app.use('/api/content', contentRoutes);
 app.use('/api/triagem', triagemRoutes);
 app.use('/api/scheduling', schedulingRoutes);
-app.use('/api/finance', financeRoutes); //
-app.use('/api/notes', notesRoutes); //
-app.use('/api/dreams', dreamRoutes); //
-app.use('/api/notifications', notificationsRoutes); //
-app.use('/api/calendar', calendarRoutes); //
-// --- End Restore ---
+app.use('/api/finance', financeRoutes);
+app.use('/api/notes', notesRoutes);
+app.use('/api/dreams', dreamRoutes);
+app.use('/api/notifications', notificationsRoutes);
+app.use('/api/calendar', calendarRoutes);
+// --- Fim da reativação das rotas ---
 
-// --- Simple Health Check Route ---
-app.get('/', (req, res) => {
-  console.log('[HEALTH CHECK] Root route / accessed.');
-  res.status(200).send('Server (API routes only) is running OK!');
-});
-// --- End Health Check ---
-
-// Serve static files from the 'uploads' directory
+// Servir arquivos estáticos (uploads)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// --- Global Error Handlers ---
+// --- MELHORIA: Handler de Rota Não Encontrada (404) ---
+// Deve ser colocado DEPOIS de todas as outras rotas
+app.use((req, res, next) => {
+    console.warn(`[404] Rota não encontrada: ${req.method} ${req.originalUrl}`);
+    res.status(404).send({ message: 'Rota não encontrada' });
+});
+
+// Handlers de Erro Globais (mantenha os seus)
 process.on('uncaughtException', (error) => {
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  console.error('[FATAL] Uncaught Exception:', error);
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  // Consider graceful shutdown: process.exit(1);
+    console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+    console.error('UNCAUGHT EXCEPTION:', error);
+    console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+    // Em produção, considere reiniciar o processo: process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  // Consider graceful shutdown: process.exit(1);
+    console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+    console.error('UNHANDLED REJECTION:', reason);
+    console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
 });
 
-// --- HTTP Server Error Listeners ---
 httpServer.on('error', (error) => {
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  console.error('[FATAL] HTTP Server Error Event:', error);
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+    console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+    console.error('HTTP SERVER ERROR:', error);
+    console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
 });
 
 httpServer.on('clientError', (err, socket) => {
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  console.error('[FATAL] HTTP Client Error Event:', err);
-  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-  // Ensure socket is destroyed after logging
-  if (socket.writable) {
-      socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
-  }
-  socket.destroy(err);
+    console.error(`Client Error: ${err}`);
+    socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
 });
-// --- End HTTP Server Error Listeners ---
+// --- Fim dos Handlers de Erro ---
 
-// Start the server, listening on all interfaces (0.0.0.0)
+// Iniciar o servidor
 httpServer.listen(port, '0.0.0.0', () => {
-  console.log(`Server with API routes running on port ${port}, listening on 0.0.0.0`);
+  console.log(`Servidor completo rodando na porta ${port} ouvindo em 0.0.0.0`);
 });
