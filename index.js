@@ -66,6 +66,20 @@ const io = new Server(httpServer, {
     }
 });
 
+httpServer.on('error', (error) => {
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  console.error('[FATAL] HTTP Server Error Event:', error);
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+});
+
+httpServer.on('clientError', (err, socket) => {
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  console.error('[FATAL] HTTP Client Error Event:', err);
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  // From Node.js docs: Ensure socket is destroyed after logging
+  socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); 
+});
+
 app.set('io', io);
 app.set('getUserSocket', getUserSocket);
 
