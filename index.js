@@ -1,57 +1,61 @@
 // server/index.js
 const dotenv = require('dotenv');
-dotenv.config();
+dotenv.config(); // Load environment variables first
 
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { createServer } = require('http');
-// const { Server } = require('socket.io'); // <-- Comment out Socket.IO Server
-// const { initializeSocket, getUserSocket } = require('./src/socketHandlers.js'); // <-- Comment out socket handlers
+// const { Server } = require('socket.io'); // Socket.IO Server still commented out
+// const { initializeSocket, getUserSocket } = require('./src/socketHandlers.js'); // Socket handlers still commented out
 
-// --- Temporarily Comment Out ALL Route Imports ---
-/*
+// --- Restore ALL Route Imports ---
 const authRoutes = require('./src/routes/authRoutes.js');
 const usersRoutes = require('./src/routes/usersRoutes.js');
 const profileRoutes = require('./src/routes/profileRoutes.js');
 const agendaRoutes = require('./src/routes/agendaRoutes.js');
 const messagesRoutes = require('./src/routes/messagesRoutes.js');
-const contentRoutes = require('./src/routes/contentRoutes');
+const contentRoutes = require('./src/routes/contentRoutes'); //
 const triagemRoutes = require('./src/routes/triagemRoutes.js');
 const schedulingRoutes = require('./src/routes/schedulingRoutes.js');
-const financeRoutes = require('./src/routes/financeRoutes');
-const notesRoutes = require('./src/routes/notesRoutes.js');
-const dreamRoutes = require('./src/routes/dreamRoutes.js');
-const notificationsRoutes = require('./src/routes/notificationsRoutes.js');
-const calendarRoutes = require('./src/routes/calendarRoutes.js');
-*/
-// --- End Comment Out ---
+const financeRoutes = require('./src/routes/financeRoutes'); //
+const notesRoutes = require('./src/routes/notesRoutes.js'); //
+const dreamRoutes = require('./src/routes/dreamRoutes.js'); //
+const notificationsRoutes = require('./src/routes/notificationsRoutes.js'); //
+const calendarRoutes = require('./src/routes/calendarRoutes.js'); //
+// --- End Restore ---
 
 const app = express();
-const port = process.env.PORT || 3001;
+const port = process.env.PORT || 3001; // Use PORT from environment or fallback
 
-// Keep CORS configuration
+// CORS configuration
 const allowedOrigins = [
-    'http://localhost:5173',
-    'https://integrandoser.integrandoser.com.br'
+    'http://localhost:5173', // Your local frontend
+    'https://integrandoser.integrandoser.com.br' // Your production frontend domain
 ];
 const corsOptions = {
     origin: function (origin, callback) {
-        if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
+        // Allow requests with no origin (like mobile apps, curl requests, or same-origin requests)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) === -1) {
+            const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+            return callback(new Error(msg), false);
         }
+        return callback(null, true);
     },
-    credentials: true
+    credentials: true // Important for cookies, authorization headers with HTTPS
 };
 app.use(cors(corsOptions));
+// Handle preflight requests for all routes
+app.options('*', cors(corsOptions));
 
+// Middleware to parse JSON bodies
 app.use(express.json());
 
-// Create the HTTP server (without Socket.IO for now)
+// Create the HTTP server
 const httpServer = createServer(app);
-/* // <-- Comment out Socket.IO setup
+
+/* // Socket.IO setup remains commented out for now
 const io = new Server(httpServer, {
     cors: {
         origin: allowedOrigins,
@@ -59,46 +63,72 @@ const io = new Server(httpServer, {
         credentials: true
     }
 });
-app.set('io', io);
-app.set('getUserSocket', getUserSocket);
-initializeSocket(io);
-*/ // <-- End Comment Out
+app.set('io', io); // Store io instance for access in routes
+app.set('getUserSocket', getUserSocket); // Store getUserSocket function
+initializeSocket(io); // Initialize socket event listeners and middleware
+*/
 
-// --- Temporarily Comment Out ALL API Routes ---
-/*
-app.use('/api/auth', authRoutes);
+// --- Restore ALL API Routes ---
+app.use('/api/auth', authRoutes); //
 app.use('/api/users', usersRoutes);
 app.use('/api/profile', profileRoutes);
-app.use('/api/agenda', agendaRoutes);
-app.use('/api/messages', messagesRoutes);
-app.use('/api/content', contentRoutes);
+app.use('/api/agenda', agendaRoutes); //
+app.use('/api/messages', messagesRoutes); //
+app.use('/api/content', contentRoutes); //
 app.use('/api/triagem', triagemRoutes);
 app.use('/api/scheduling', schedulingRoutes);
-app.use('/api/finance', financeRoutes);
-app.use('/api/notes', notesRoutes);
-app.use('/api/dreams', dreamRoutes);
-app.use('/api/notifications', notificationsRoutes);
-app.use('/api/calendar', calendarRoutes);
-*/
-// --- End Comment Out ---
+app.use('/api/finance', financeRoutes); //
+app.use('/api/notes', notesRoutes); //
+app.use('/api/dreams', dreamRoutes); //
+app.use('/api/notifications', notificationsRoutes); //
+app.use('/api/calendar', calendarRoutes); //
+// --- End Restore ---
 
-// --- Add a Simple Health Check Route ---
+// --- Simple Health Check Route ---
 app.get('/', (req, res) => {
-  console.log('[HEALTH CHECK] Root route / accessed.'); // Add log
-  res.status(200).send('Server is running OK!');
+  console.log('[HEALTH CHECK] Root route / accessed.');
+  res.status(200).send('Server (API routes only) is running OK!');
 });
 // --- End Health Check ---
 
-// Keep static files (if needed, otherwise comment out too)
+// Serve static files from the 'uploads' directory
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Keep global error handlers
-process.on('uncaughtException', (error) => { /* ... */ });
-process.on('unhandledRejection', (reason, promise) => { /* ... */ });
-httpServer.on('error', (error) => { /* ... */ });
-httpServer.on('clientError', (err, socket) => { /* ... */ });
+// --- Global Error Handlers ---
+process.on('uncaughtException', (error) => {
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  console.error('[FATAL] Uncaught Exception:', error);
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  // Consider graceful shutdown: process.exit(1);
+});
 
-// Start the server
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  // Consider graceful shutdown: process.exit(1);
+});
+
+// --- HTTP Server Error Listeners ---
+httpServer.on('error', (error) => {
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  console.error('[FATAL] HTTP Server Error Event:', error);
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+});
+
+httpServer.on('clientError', (err, socket) => {
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  console.error('[FATAL] HTTP Client Error Event:', err);
+  console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+  // Ensure socket is destroyed after logging
+  if (socket.writable) {
+      socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+  }
+  socket.destroy(err);
+});
+// --- End HTTP Server Error Listeners ---
+
+// Start the server, listening on all interfaces (0.0.0.0)
 httpServer.listen(port, '0.0.0.0', () => {
-  console.log(`Minimal server running on port ${port} listening on 0.0.0.0`); // Modified log
+  console.log(`Server with API routes running on port ${port}, listening on 0.0.0.0`);
 });
