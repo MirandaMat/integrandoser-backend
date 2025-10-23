@@ -517,7 +517,6 @@ router.get('/site', async (req, res) => {
 });
 
 // PUT /api/content/site - Atualiza o conteúdo geral do site
-// /src/routes/contentRoutes.js
 
 router.put('/site', protect, isAdmin, upload.fields([
     { name: 'hero_video', maxCount: 1 },
@@ -528,6 +527,9 @@ router.put('/site', protect, isAdmin, upload.fields([
 ]), async (req, res) => {
     
     console.log('[DEBUG-BACKEND] Corpo da requisição recebido:', req.body);
+    console.log('--- [PUT /site] Nova Requisição ---');
+    console.log('[PUT /site] Raw req.body:', JSON.stringify(req.body, null, 2)); // Log do corpo (dados JSON stringificados)
+    console.log('[PUT /site] req.files:', JSON.stringify(req.files, null, 2));
 
     const sectionsToUpdate = ['home', 'about', 'founder', 'footer'];
     const updatedSectionKey = sectionsToUpdate.find(key => req.body[key]);
