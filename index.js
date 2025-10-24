@@ -1,13 +1,13 @@
 // server/index.js
 const dotenv = require('dotenv');
-dotenv.config(); // Garante que o .env seja lido primeiro
+dotenv.config(); 
 
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { createServer } = require('http');
-const { Server } = require('socket.io'); // <-- DESCOMENTADO
-const { initializeSocket, getUserSocket } = require('./src/socketHandlers.js'); // <-- DESCOMENTADO
+const { Server } = require('socket.io'); 
+const { initializeSocket, getUserSocket } = require('./src/socketHandlers.js'); 
 
 // --- Reativar TODAS as rotas ---
 const authRoutes = require('./src/routes/authRoutes.js');
