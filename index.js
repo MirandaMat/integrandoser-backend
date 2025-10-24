@@ -26,6 +26,7 @@ const calendarRoutes = require('./src/routes/calendarRoutes.js');
 // --- Fim da reativação ---
 
 const app = express();
+app.set('trust proxy', 1);
 const port = process.env.PORT || 3001;
 
 // Configuração do CORS
