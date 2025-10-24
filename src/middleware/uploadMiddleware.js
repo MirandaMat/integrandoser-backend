@@ -12,6 +12,7 @@ if (!fs.existsSync(uploadDir)){
 const allowedMimeTypes = [
     'image/jpeg', 'image/png', 'image/gif', 'image/webp',
     'video/mp4', 'video/webm', 'video/ogg',
+    'video/quicktime',
     'application/pdf', 'application/msword', 
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ];
