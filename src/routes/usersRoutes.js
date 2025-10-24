@@ -809,10 +809,10 @@ router.get('/my-dashboard/patient', protect, isPaciente, async (req, res) => {
         // 5. Dados para o Gráfico de Atividade do Diário (últimos 30 dias)
         const dreamActivity = await conn.query(
             `SELECT CAST(DATE(created_at) AS CHAR) as date, COUNT(*) as count 
-             FROM dream_diary_entries 
-             WHERE patient_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-             GROUP BY DATE(created_at) 
-             ORDER BY DATE(created_at) ASC`,
+            FROM dream_diary_entries 
+            WHERE patient_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+            GROUP BY date 
+            ORDER BY date ASC`,
             [patientId]
         );
 
