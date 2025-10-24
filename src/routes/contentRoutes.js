@@ -571,13 +571,15 @@ router.put('/site', protect, isAdmin, upload.fields([
             console.log('[PUT /site] Processing uploaded files to merge URLs...');
             // Home Section Files
             if (updatedSectionKey === 'home' && req.files.hero_video) {
-                dataToMerge.hero_video_url = req.files.hero_video[0].path.replace(/\\/g, "/"); // Sobrescreve/adiciona
+                // ATRIBUIÇÃO CORRETA:
+                dataToMerge.hero_video_url = req.files.hero_video[0].path.replace(/\\/g, "/"); //
                 console.log(`[PUT /site] Merged hero_video_url: ${dataToMerge.hero_video_url}`);
             }
             if (updatedSectionKey === 'home' && req.files.tpt_media) {
                 const file = req.files.tpt_media[0];
-                dataToMerge.tpt_media_url = file.path.replace(/\\/g, "/"); // Sobrescreve/adiciona
-                dataToMerge.tpt_media_type = file.mimetype.startsWith('video') ? 'video' : 'image'; // Sobrescreve/adiciona
+                // ATRIBUIÇÃO CORRETA:
+                dataToMerge.tpt_media_url = file.path.replace(/\\/g, "/"); //
+                dataToMerge.tpt_media_type = file.mimetype.startsWith('video') ? 'video' : 'image'; //
                 console.log(`[PUT /site] Merged tpt_media_url: ${dataToMerge.tpt_media_url}, type: ${dataToMerge.tpt_media_type}`);
             }
             // About Section Files
