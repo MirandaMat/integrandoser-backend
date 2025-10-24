@@ -513,97 +513,121 @@ router.get('/site', async (req, res) => {
 });
 
 // PUT /api/content/site - Atualiza o conteúdo geral do site
-
+// PUT /api/content/site - Atualiza o conteúdo geral do site (VERSÃO CORRIGIDA)
 router.put('/site', protect, isAdmin, upload.fields([
     { name: 'hero_video', maxCount: 1 },
     { name: 'about_logo', maxCount: 1 },
     { name: 'founder_image', maxCount: 1 },
     { name: 'tpt_media', maxCount: 1 },
-    { name: 'partner_logos', maxCount: 10 } // Permite até 10 logos de parceiros
+    { name: 'partner_logos', maxCount: 10 }
 ]), async (req, res) => {
-    
-    console.log('[DEBUG-BACKEND] Corpo da requisição recebido:', req.body);
-    console.log('--- [PUT /site] Nova Requisição ---');
-    console.log('[PUT /site] Raw req.body:', JSON.stringify(req.body, null, 2)); // Log do corpo (dados JSON stringificados)
+
+    console.log('--- [PUT /site] REQUEST RECEIVED ---');
+    console.log('[PUT /site] req.body:', JSON.stringify(req.body, null, 2));
     console.log('[PUT /site] req.files:', JSON.stringify(req.files, null, 2));
 
     const sectionsToUpdate = ['home', 'about', 'founder', 'footer'];
     const updatedSectionKey = sectionsToUpdate.find(key => req.body[key]);
-    
+
+    console.log(`[PUT /site] Detected section key to update: ${updatedSectionKey}`);
+
     if (!updatedSectionKey) {
+        console.error('[PUT /site] Error: No valid section key found in req.body. Responding 400.');
         return res.status(400).json({ message: 'Nenhuma seção para atualizar foi fornecida no corpo da requisição.' });
     }
 
     let conn;
     try {
-        conn = await pool.getConnection();
+        conn = await pool.getConnection(); //
 
-        // 1. Pega os dados de texto da requisição.
         let dataToMerge = {};
         const sectionDataString = req.body[updatedSectionKey];
+
+        console.log(`[PUT /site] Received section data string for key '${updatedSectionKey}'. Type: ${typeof sectionDataString}`);
+        // Log the string itself ONLY if it's reasonably short
+        if (typeof sectionDataString === 'string' && sectionDataString.length < 500) {
+            console.log(`[PUT /site] String content:`, sectionDataString);
+        } else if (typeof sectionDataString === 'string') {
+            console.log(`[PUT /site] Received section data as a string (length: ${sectionDataString.length}).`);
+        }
+
+        // --- PASSO 1: Parse do JSON recebido ---
         if (typeof sectionDataString === 'string') {
             try {
-                dataToMerge = JSON.parse(sectionDataString);
+                dataToMerge = JSON.parse(sectionDataString); // Tenta fazer o parse
+                console.log(`[PUT /site] Successfully parsed JSON for key '${updatedSectionKey}'. Initial dataToMerge:`, JSON.stringify(dataToMerge));
             } catch (e) {
+                console.error(`[PUT /site] Error parsing JSON string for key '${updatedSectionKey}'. Error:`, e);
+                console.error(`[PUT /site] The invalid string was:`, sectionDataString);
                 return res.status(400).json({ message: `O conteúdo da seção '${updatedSectionKey}' não é um JSON válido.` });
             }
         } else {
-             return res.status(400).json({ message: `O conteúdo da seção '${updatedSectionKey}' não foi enviado como uma string JSON.` });
+            console.error(`[PUT /site] Error: Section data for key '${updatedSectionKey}' was not received as a string. Type was: ${typeof sectionDataString}. Responding 400.`);
+            return res.status(400).json({ message: `O conteúdo da seção '${updatedSectionKey}' não foi enviado como uma string JSON.` });
         }
-        
-        // 2. Adiciona as URLs de arquivos (se houver) ao objeto que será mesclado.
+
+        // --- PASSO 2: Adicionar/Sobrescrever URLs dos NOVOS arquivos ---
         if (req.files) {
+            console.log('[PUT /site] Processing uploaded files to merge URLs...');
+            // Home Section Files
             if (updatedSectionKey === 'home' && req.files.hero_video) {
-                dataToMerge.hero_video_url = req.files.hero_video[0].path.replace(/\\/g, "/");
+                dataToMerge.hero_video_url = req.files.hero_video[0].path.replace(/\\/g, "/"); // Sobrescreve/adiciona
+                console.log(`[PUT /site] Merged hero_video_url: ${dataToMerge.hero_video_url}`);
             }
             if (updatedSectionKey === 'home' && req.files.tpt_media) {
                 const file = req.files.tpt_media[0];
-                dataToMerge.tpt_media_url = file.path.replace(/\\/g, "/");
-                dataToMerge.tpt_media_type = file.mimetype.startsWith('video') ? 'video' : 'image';
+                dataToMerge.tpt_media_url = file.path.replace(/\\/g, "/"); // Sobrescreve/adiciona
+                dataToMerge.tpt_media_type = file.mimetype.startsWith('video') ? 'video' : 'image'; // Sobrescreve/adiciona
+                console.log(`[PUT /site] Merged tpt_media_url: ${dataToMerge.tpt_media_url}, type: ${dataToMerge.tpt_media_type}`);
             }
+            // About Section Files
             if (updatedSectionKey === 'about' && req.files.about_logo) {
-                dataToMerge.logo_url = req.files.about_logo[0].path.replace(/\\/g, "/");
+                dataToMerge.logo_url = req.files.about_logo[0].path.replace(/\\/g, "/"); // Sobrescreve/adiciona
+                console.log(`[PUT /site] Merged about logo_url: ${dataToMerge.logo_url}`);
             }
-            if (updatedSectionKey === 'founder' && req.files.founder_image) {
-                dataToMerge.image_url = req.files.founder_image[0].path.replace(/\\/g, "/");
-            }
-            // Adiciona os novos logos de parceiros, se enviados
             if (updatedSectionKey === 'about' && req.files.partner_logos) {
-                const newPartnerUrls = req.files.partner_logos.map(file => file.path.replace(/\\/g, "/"));
-                // Combina os logos existentes (que o frontend envia) com os novos
-                dataToMerge.partner_logos = [...(dataToMerge.partner_logos || []), ...newPartnerUrls];
+                // Pega os logos existentes (que vieram do JSON parseado) e adiciona os novos
+                const existingLogos = Array.isArray(dataToMerge.partner_logos) ? dataToMerge.partner_logos : [];
+                const newLogoUrls = req.files.partner_logos.map(file => file.path.replace(/\\/g, "/")); // Obtém novos paths
+                dataToMerge.partner_logos = [...existingLogos, ...newLogoUrls]; // Combina
+                console.log(`[PUT /site] Merged ${newLogoUrls.length} new partner logo URLs. Total now: ${dataToMerge.partner_logos.length}`);
             }
-        }
-
-        // 3. Monta o objeto final para a query de merge do JSON.
-        const updatePayload = {
-            [updatedSectionKey]: dataToMerge
-        };
-        const updatePayloadString = JSON.stringify(updatePayload);
-
-        // 4. Garante que a linha com id=1 exista antes de tentar atualizar (UPSERT)
-        const [check] = await conn.query("SELECT id FROM site_content WHERE id = 1");
-        if (!check) {
-            // Se não existir, insere uma nova linha com o conteúdo atual.
-            await conn.query(`INSERT INTO site_content (id, content) VALUES (1, ?)`, [updatePayloadString]);
+            // Founder Section File
+            if (updatedSectionKey === 'founder' && req.files.founder_image) {
+                dataToMerge.image_url = req.files.founder_image[0].path.replace(/\\/g, "/"); // Sobrescreve/adiciona
+                console.log(`[PUT /site] Merged founder image_url: ${dataToMerge.image_url}`);
+            }
         } else {
-            // Se existir, usa JSON_MERGE_PATCH para mesclar o conteúdo novo com o existente.
-            // COALESCE garante que a função não falhe se o campo 'content' for NULL.
-            const query = `
-                UPDATE site_content 
-                SET content = JSON_MERGE_PATCH(COALESCE(content, '{}'), ?) 
-                WHERE id = 1
-            `;
-            await conn.query(query, [updatePayloadString]);
+            console.log('[PUT /site] No new files received in req.files.');
         }
-        
+
+        // --- PASSO 3: Preparar e Salvar no Banco ---
+        const updatePayload = { [updatedSectionKey]: dataToMerge };
+        const updatePayloadString = JSON.stringify(updatePayload);
+        console.log(`[PUT /site] Final payload string for DB merge:`, updatePayloadString);
+
+        const [check] = await conn.query("SELECT id FROM site_content WHERE id = 1"); //
+        if (!check) {
+            console.log(`[PUT /site] Row with id=1 not found. Inserting new row.`);
+            await conn.query(`INSERT INTO site_content (id, content) VALUES (1, ?)`, [updatePayloadString]); //
+        } else {
+            console.log(`[PUT /site] Row with id=1 found. Updating using JSON_MERGE_PATCH.`);
+            const query = `
+                UPDATE site_content
+                SET content = JSON_MERGE_PATCH(COALESCE(content, '{}'), ?)
+                WHERE id = 1
+            `; //
+            await conn.query(query, [updatePayloadString]); //
+        }
+
+        console.log(`[PUT /site] Update successful for section '${updatedSectionKey}'.`);
         res.json({ message: `Seção '${updatedSectionKey}' atualizada com sucesso!` });
 
     } catch (error) {
-        console.error("Erro ao atualizar conteúdo do site:", error);
-        res.status(500).json({ message: 'Erro ao atualizar conteúdo do site.', error: error.message });
+        console.error(`[PUT /site] Error during database operation or final processing for section '${updatedSectionKey}':`, error);
+        res.status(500).json({ message: 'Erro ao atualizar conteúdo do site.', error: error.message }); //
     } finally {
-        if (conn) conn.release();
+        if (conn) conn.release(); //
     }
 });
 
