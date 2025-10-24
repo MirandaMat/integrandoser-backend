@@ -513,34 +513,24 @@ router.get('/site', async (req, res) => {
 });
 
 // PUT /api/content/site - Atualiza o conteúdo geral do site
+
 router.put('/site', protect, isAdmin, upload.fields([
     { name: 'hero_video', maxCount: 1 },
     { name: 'about_logo', maxCount: 1 },
     { name: 'founder_image', maxCount: 1 },
     { name: 'tpt_media', maxCount: 1 },
-    { name: 'partner_logos', maxCount: 10 }
+    { name: 'partner_logos', maxCount: 10 } // Permite até 10 logos de parceiros
 ]), async (req, res) => {
-
-    // --- START: ADDED LOGGING ---
-    console.log('--- [PUT /site] REQUEST RECEIVED ---');
-    // Log the raw body received after Multer processing
-    console.log('[PUT /site] req.body:', JSON.stringify(req.body, null, 2));
-    // Log the files received
+    
+    console.log('[DEBUG-BACKEND] Corpo da requisição recebido:', req.body);
+    console.log('--- [PUT /site] Nova Requisição ---');
+    console.log('[PUT /site] Raw req.body:', JSON.stringify(req.body, null, 2)); // Log do corpo (dados JSON stringificados)
     console.log('[PUT /site] req.files:', JSON.stringify(req.files, null, 2));
-    // --- END: ADDED LOGGING ---
 
     const sectionsToUpdate = ['home', 'about', 'founder', 'footer'];
-    // Find the key ('home', 'about', etc.) present in the body
     const updatedSectionKey = sectionsToUpdate.find(key => req.body[key]);
-
-    // --- START: ADDED LOGGING ---
-    console.log(`[PUT /site] Detected section key to update: ${updatedSectionKey}`);
-    // --- END: ADDED LOGGING ---
-
+    
     if (!updatedSectionKey) {
-        // --- START: ADDED LOGGING ---
-        console.error('[PUT /site] Error: No valid section key found in req.body. Responding 400.');
-        // --- END: ADDED LOGGING ---
         return res.status(400).json({ message: 'Nenhuma seção para atualizar foi fornecida no corpo da requisição.' });
     }
 
@@ -548,83 +538,69 @@ router.put('/site', protect, isAdmin, upload.fields([
     try {
         conn = await pool.getConnection();
 
+        // 1. Pega os dados de texto da requisição.
         let dataToMerge = {};
         const sectionDataString = req.body[updatedSectionKey];
-
-        // --- START: ADDED LOGGING ---
-        console.log(`[PUT /site] Received section data string for key '${updatedSectionKey}'. Type: ${typeof sectionDataString}`);
-        // Log the string itself ONLY if it's reasonably short, otherwise log confirmation
-        if (typeof sectionDataString === 'string' && sectionDataString.length < 500) {
-            console.log(`[PUT /site] String content:`, sectionDataString);
-        } else if (typeof sectionDataString === 'string') {
-            console.log(`[PUT /site] Received section data as a string (length: ${sectionDataString.length}).`);
-        }
-        // --- END: ADDED LOGGING ---
-
         if (typeof sectionDataString === 'string') {
             try {
                 dataToMerge = JSON.parse(sectionDataString);
-                // --- START: ADDED LOGGING ---
-                console.log(`[PUT /site] Successfully parsed JSON for key '${updatedSectionKey}'.`);
-                // --- END: ADDED LOGGING ---
             } catch (e) {
-                 // --- START: ADDED LOGGING ---
-                console.error(`[PUT /site] Error parsing JSON string for key '${updatedSectionKey}'. Error:`, e);
-                console.error(`[PUT /site] The invalid string was:`, sectionDataString); // Log the bad string
-                // --- END: ADDED LOGGING ---
                 return res.status(400).json({ message: `O conteúdo da seção '${updatedSectionKey}' não é um JSON válido.` });
             }
         } else {
-             // --- START: ADDED LOGGING ---
-            console.error(`[PUT /site] Error: Section data for key '${updatedSectionKey}' was not received as a string. Type was: ${typeof sectionDataString}. Responding 400.`);
-             // --- END: ADDED LOGGING ---
              return res.status(400).json({ message: `O conteúdo da seção '${updatedSectionKey}' não foi enviado como uma string JSON.` });
         }
-
-        // --- Add file URLs to the parsed data ---
+        
+        // 2. Adiciona as URLs de arquivos (se houver) ao objeto que será mesclado.
         if (req.files) {
-            console.log('[PUT /site] Processing uploaded files...'); // Log file processing start
             if (updatedSectionKey === 'home' && req.files.hero_video) {
                 dataToMerge.hero_video_url = req.files.hero_video[0].path.replace(/\\/g, "/");
-                 console.log(`[PUT /site] Added hero_video_url: ${dataToMerge.hero_video_url}`);
             }
             if (updatedSectionKey === 'home' && req.files.tpt_media) {
                 const file = req.files.tpt_media[0];
                 dataToMerge.tpt_media_url = file.path.replace(/\\/g, "/");
                 dataToMerge.tpt_media_type = file.mimetype.startsWith('video') ? 'video' : 'image';
-                 console.log(`[PUT /site] Added tpt_media_url: ${dataToMerge.tpt_media_url}, type: ${dataToMerge.tpt_media_type}`);
             }
-            // Add similar logs if handling about_logo, founder_image, partner_logos here
-        } else {
-             console.log('[PUT /site] No files received in req.files.');
+            if (updatedSectionKey === 'about' && req.files.about_logo) {
+                dataToMerge.logo_url = req.files.about_logo[0].path.replace(/\\/g, "/");
+            }
+            if (updatedSectionKey === 'founder' && req.files.founder_image) {
+                dataToMerge.image_url = req.files.founder_image[0].path.replace(/\\/g, "/");
+            }
+            // Adiciona os novos logos de parceiros, se enviados
+            if (updatedSectionKey === 'about' && req.files.partner_logos) {
+                const newPartnerUrls = req.files.partner_logos.map(file => file.path.replace(/\\/g, "/"));
+                // Combina os logos existentes (que o frontend envia) com os novos
+                dataToMerge.partner_logos = [...(dataToMerge.partner_logos || []), ...newPartnerUrls];
+            }
         }
 
-        const updatePayload = { [updatedSectionKey]: dataToMerge };
+        // 3. Monta o objeto final para a query de merge do JSON.
+        const updatePayload = {
+            [updatedSectionKey]: dataToMerge
+        };
         const updatePayloadString = JSON.stringify(updatePayload);
-         // --- START: ADDED LOGGING ---
-        console.log(`[PUT /site] Final payload string for DB merge:`, updatePayloadString);
-         // --- END: ADDED LOGGING ---
 
-        // Check if row exists before updating/inserting
+        // 4. Garante que a linha com id=1 exista antes de tentar atualizar (UPSERT)
         const [check] = await conn.query("SELECT id FROM site_content WHERE id = 1");
         if (!check) {
-             console.log(`[PUT /site] Row with id=1 not found. Inserting new row.`);
+            // Se não existir, insere uma nova linha com o conteúdo atual.
             await conn.query(`INSERT INTO site_content (id, content) VALUES (1, ?)`, [updatePayloadString]);
         } else {
-             console.log(`[PUT /site] Row with id=1 found. Updating using JSON_MERGE_PATCH.`);
+            // Se existir, usa JSON_MERGE_PATCH para mesclar o conteúdo novo com o existente.
+            // COALESCE garante que a função não falhe se o campo 'content' for NULL.
             const query = `
-                UPDATE site_content
-                SET content = JSON_MERGE_PATCH(COALESCE(content, '{}'), ?)
+                UPDATE site_content 
+                SET content = JSON_MERGE_PATCH(COALESCE(content, '{}'), ?) 
                 WHERE id = 1
             `;
             await conn.query(query, [updatePayloadString]);
         }
-
-        console.log(`[PUT /site] Update successful for section '${updatedSectionKey}'.`); // Log success
+        
         res.json({ message: `Seção '${updatedSectionKey}' atualizada com sucesso!` });
 
     } catch (error) {
-        console.error(`[PUT /site] Error during database operation or final processing for section '${updatedSectionKey}':`, error); // More specific error log
+        console.error("Erro ao atualizar conteúdo do site:", error);
         res.status(500).json({ message: 'Erro ao atualizar conteúdo do site.', error: error.message });
     } finally {
         if (conn) conn.release();
