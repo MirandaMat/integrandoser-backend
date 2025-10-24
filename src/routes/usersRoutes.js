@@ -812,7 +812,7 @@ router.get('/my-dashboard/patient', protect, isPaciente, async (req, res) => {
              FROM dream_diary_entries 
              WHERE patient_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
              GROUP BY DATE(created_at) 
-             ORDER BY date ASC`,
+             ORDER BY DATE(created_at) ASC`,
             [patientId]
         );
 
