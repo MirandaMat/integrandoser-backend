@@ -20,14 +20,15 @@ const maskedPass = process.env.EMAIL_PASS
 console.log(`[Mailer Config] Usando EMAIL_PASS: ${maskedPass}`);
 
 const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com', // Servidor SMTP do Gmail
-    port: 587, // Porta SSL
-    secure: false, // Usar SSL
+    host: 'smtp.gmail.com', // Ou o host SMTP do seu novo provedor
+    port: 587,             // Ou 465 se preferir SSL
+    secure: false,           // false para 587 (TLS), true para 465 (SSL)
+    requireTLS: true,       // Bom para porta 587
     auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS // Certifique-se que é a Senha de App
+        user: process.env.EMAIL_USER, // Deve ser a NOVA conta
+        pass: process.env.EMAIL_PASS  // Deve ser a NOVA Senha de App
     },
-    connectionTimeout: 15000 // Aumenta um pouco o timeout para 10 segundos (opcional)
+    connectionTimeout: 15000 // Mantém o timeout aumentado
 });
 
 const sendWelcomeEmail = async (to, tempPassword) => {
