@@ -380,6 +380,45 @@ router.patch('/invoices/:id/status', [protect], async (req, res) => {
                     );
                 }
             }
+            
+            // --- LÓGICA PARA ATIVAR AGENDAMENTOS DE PACOTE ---
+
+            const invoiceId = parseInt(id);
+            const appointmentsToConfirm = await conn.query(
+                "SELECT id, professional_id, patient_id FROM appointments WHERE package_invoice_id = ? AND status = 'Aguardando Pagamento'",
+                [invoiceId]
+            );
+
+            if (appointmentsToConfirm.length > 0) {
+                const appointmentIds = appointmentsToConfirm.map(a => a.id);
+                await conn.query(
+                    "UPDATE appointments SET status = 'Agendada' WHERE id IN (?)",
+                    [appointmentIds]
+                );
+
+                // Notificar o Paciente e o Profissional
+                const [patient] = await conn.query("SELECT user_id FROM patients WHERE id = ?", [appointmentsToConfirm[0].patient_id]);
+                const [prof] = await conn.query("SELECT user_id FROM professionals WHERE id = ?", [appointmentsToConfirm[0].professional_id]);
+
+                if (patient && patient.user_id) {
+                    await createNotification(
+                        req,
+                        patient.user_id,
+                        'appointment_rescheduled', // re-usando tipo existente
+                        `O pagamento do seu pacote de ${appointmentsToConfirm.length} sessões foi confirmado. Suas consultas estão agendadas!`,
+                        '/paciente/agenda'
+                    );
+                }
+                if (prof && prof.user_id) {
+                    await createNotification(
+                        req,
+                        prof.user_id,
+                        'payment_received',
+                        `Pagamento da Fatura #${invoiceId} (pacote) recebido. ${appointmentsToConfirm.length} consultas foram confirmadas.`,
+                        '/professional/agenda'
+                    );
+                }
+            }
 
             // Exclui a fatura original após a migração para a tabela de transações
             //await conn.query("DELETE FROM invoices WHERE id = ?", [parseInt(id)]);

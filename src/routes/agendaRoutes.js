@@ -529,12 +529,10 @@ router.get('/my-appointments/professional', protect, async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
-        // ATUALIZAÇÃO: Adicionado um campo 'is_pending_review' na query.
-        // Ele retorna 1 (true) se o status for 'Agendada' e a data já passou.
         const query = `
             SELECT 
                 a.id, a.appointment_time, a.status,
-                a.session_value,
+                a.session_value, a.package_invoice_id,
                 p.id as patient_id, p.user_id as patient_user_id, p.nome AS patient_name, p.imagem_url as patient_photo,
                 CASE
                     WHEN a.status = 'Agendada' AND a.appointment_time < NOW() - INTERVAL 30 MINUTE THEN 1
@@ -654,89 +652,7 @@ router.get('/future-appointments', protect, async (req, res) => {
     }
 });
 
-// Rota para o PROFISSIONAL atualizar o status de um agendamento
-/*
-router.patch('/appointments/:id/status', protect, isProfissional, async (req, res) => {
-    const { id } = req.params;
-    const { status } = req.body;
-    const { userId } = req.user;
 
-    if (!status || !['Agendada', 'Concluída', 'Cancelada'].includes(status)) {
-        return res.status(400).json({ message: 'Status inválido.' });
-    }
-
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        const profs = await conn.query('SELECT id FROM professionals WHERE user_id = ?', [userId]);
-        if (profs.length === 0) {
-            return res.status(403).json({ message: 'Perfil profissional não encontrado.' });
-        }
-        const professionalId = profs[0].id;
-
-        const apps = await conn.query('SELECT professional_id FROM appointments WHERE id = ?', [id]);
-        if (apps.length === 0 || apps[0].professional_id.toString() !== professionalId.toString()) {
-            return res.status(403).json({ message: 'Você não tem permissão para alterar este agendamento.' });
-        }
-
-        await conn.query('UPDATE appointments SET status = ? WHERE id = ?', [status, id]);
-
-        if (status === 'Concluída') {
-            const [appointmentDetails] = await conn.query( //
-                "SELECT professional_id, session_value, appointment_time FROM appointments WHERE id = ?", 
-                [id] //
-            );
-
-            if (appointmentDetails && appointmentDetails.session_value > 0) { //
-                const grossValue = parseFloat(appointmentDetails.session_value); //
-                const commissionValue = grossValue * 0.25; //
-
-                await conn.query(
-                    `INSERT IGNORE INTO professional_billings 
-                    (professional_id, appointment_id, billing_date, gross_value, commission_value, status) 
-                    VALUES (?, ?, ?, ?, ?, ?)`,
-                    [
-                        appointmentDetails.professional_id, //
-                        id, //
-                        new Date(appointmentDetails.appointment_time), //
-                        grossValue, //
-                        commissionValue, //
-                        'unbilled' //
-                    ]
-                );
-            }
-        }
-
-        const io = req.app.get('io');
-        io.emit('appointmentStatusChanged');
-
-        
-        const [appointmentDetails] = await conn.query('SELECT patient_id, appointment_time FROM appointments WHERE id = ?', [id]);
-        if (appointmentDetails) {
-            const [patientUser] = await conn.query("SELECT user_id FROM patients WHERE id = ?", [appointmentDetails.patient_id]);
-            if (patientUser && patientUser.user_id) {
-                const appointmentDate = new Date(appointmentDetails.appointment_time).toLocaleDateString('pt-BR');
-                await createNotification(
-                    req,
-                    patientUser.user_id,
-                    'appointment_rescheduled',
-                    `O status da sua consulta de ${appointmentDate} foi atualizado para: ${status}.`,
-                    '/paciente/agenda'
-                );
-            }
-        }
-        
-
-        res.json({ message: 'Status do agendamento atualizado com sucesso!' });
-    } catch (error) {
-        console.error("Erro ao atualizar status:", error);
-        res.status(500).json({ message: 'Erro ao atualizar status.' });
-    } finally {
-        if (conn) conn.release();
-    }
-});
-*/
-// server/src/routes/agendaRoutes.js
 
 // Rota para o PROFISSIONAL atualizar o status de um agendamento (COM FATURAMENTO AUTOMÁTICO)
 router.patch('/appointments/:id/status', protect, isProfissional, async (req, res) => {
@@ -744,14 +660,15 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
     const { status } = req.body;
     const { userId } = req.user;
 
-    if (!status || !['Agendada', 'Concluída', 'Cancelada'].includes(status)) {
+    const validStatuses = ['Agendada', 'Concluída', 'Cancelada'];
+    if (!status || !validStatuses.includes(status)) {
         return res.status(400).json({ message: 'Status inválido.' });
     }
 
     let conn;
     try {
         conn = await pool.getConnection();
-        await conn.beginTransaction(); // Inicia a transação para garantir a consistência dos dados
+        await conn.beginTransaction(); // Inicia a transação
 
         const profs = await conn.query('SELECT id FROM professionals WHERE user_id = ?', [userId]);
         if (profs.length === 0) {
@@ -760,16 +677,31 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
         }
         const professionalId = profs[0].id;
 
+        /*
         const apps = await conn.query('SELECT professional_id FROM appointments WHERE id = ?', [id]);
         if (apps.length === 0 || apps[0].professional_id.toString() !== professionalId.toString()) {
             await conn.rollback();
             return res.status(403).json({ message: 'Você não tem permissão para alterar este agendamento.' });
         }
+        */
+       // Modificado: Busca também o status atual e o package_invoice_id
+        const [app] = await conn.query('SELECT professional_id, status as current_status, package_invoice_id FROM appointments WHERE id = ?', [id]);
+        
+        if (!app || app.professional_id.toString() !== professionalId.toString()) {
+            await conn.rollback();
+            return res.status(403).json({ message: 'Você não tem permissão para alterar este agendamento.' });
+        }
+
+        // NOVA REGRA DE NEGÓCIO: Impede a alteração de status (exceto para Cancelar) se estiver Aguardando Pagamento
+        if (app.current_status === 'Aguardando Pagamento' && status !== 'Cancelada') {
+            await conn.rollback();
+            return res.status(403).json({ message: 'Esta consulta aguarda o pagamento do pacote. Você só pode cancelá-la.' });
+        }
 
         await conn.query('UPDATE appointments SET status = ? WHERE id = ?', [status, id]);
 
         // Se o status for 'Concluída', inicia o processo de faturamento
-        if (status === 'Concluída') {
+        if (status === 'Concluída' && !app.package_invoice_id) {
             const [appointmentDetails] = await conn.query(
                 "SELECT professional_id, patient_id, session_value, appointment_time FROM appointments WHERE id = ?", 
                 [id]
@@ -786,10 +718,6 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
                     VALUES (?, ?, ?, ?, ?, ?)`,
                     [appointmentDetails.professional_id, id, new Date(appointmentDetails.appointment_time), grossValue, commissionValue, 'unbilled']
                 );
-                
-                // ==========================================================
-                // --- INÍCIO DA NOVA LÓGICA DE FATURAMENTO AUTOMÁTICO ---
-                // ==========================================================
                 
                 // 2. Identifica o pagador (paciente ou empresa)
                 const [patientDetails] = await conn.query(
@@ -863,7 +791,7 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
                                 grossValue,
                                 dueDate,
                                 newInvoiceId,
-                                `http://localhost:5173/${recipientType}/financeiro`
+                                `https://integrandoser.com.br/${recipientType}/financeiro`
                             );
                         }
                     }
@@ -956,7 +884,9 @@ router.get('/users-for-professional-agenda', protect, isProfissional, async (req
 
 // Rota para o PROFISSIONAL HABILITADO criar um ou mais agendamentos
 router.post('/professional/appointments', protect, isProfissional, async (req, res) => {
-    const { professional_id, patient_id, company_id, session_value, frequency, appointment_times } = req.body;
+    const { professional_id, patient_id, company_id, session_value, 
+        frequency, appointment_times, is_package, 
+        discount_percentage, total_value } = req.body;
     const { userId } = req.user;
 
     if (!professional_id || !patient_id || !appointment_times || !Array.isArray(appointment_times) || appointment_times.length === 0) {
@@ -983,16 +913,74 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
         const appointmentsToCreate = [];
         const initialDate = new Date(appointment_times[0]);
 
-        if (frequency === 'Evento Único') {
+        // ==========================================================
+        // --- LÓGICA DE CRIAÇÃO DE PACOTE E FATURA ---
+
+        let newPackageInvoiceId = null;
+        let newStatus = 'Agendada';
+        let recipientUserId = null;
+        let recipientName = '';
+        let recipientEmail = '';
+        let recipientType = '';
+
+        if (is_package && total_value > 0) {
+            newStatus = 'Aguardando Pagamento';
+
+            // 1. Identifica o pagador (paciente ou empresa)
+            const [patientDetails] = await conn.query("SELECT user_id, company_id, nome FROM patients WHERE id = ?", [patient_id]);
+            if (patientDetails) {
+                if (patientDetails.company_id) {
+                    const [companyDetails] = await conn.query("SELECT u.id as user_id, c.nome_empresa as name, u.email FROM companies c JOIN users u ON c.user_id = u.id WHERE c.id = ?", [patientDetails.company_id]);
+                    if (companyDetails) {
+                        recipientUserId = companyDetails.user_id;
+                        recipientName = companyDetails.name;
+                        recipientEmail = companyDetails.email;
+                        recipientType = 'empresa';
+                    }
+                }
+                if (!recipientUserId) { // Se não tiver empresa, cobra o paciente
+                    const [userPatientDetails] = await conn.query("SELECT u.id as user_id, p.nome as name, u.email FROM patients p JOIN users u ON p.user_id = u.id WHERE p.id = ?", [patient_id]);
+                    if (userPatientDetails) {
+                        recipientUserId = userPatientDetails.user_id;
+                        recipientName = userPatientDetails.name;
+                        recipientEmail = userPatientDetails.email;
+                        recipientType = 'paciente';
+                    }
+                }
+            }
+
+            // 2. Se encontrou um pagador, cria a fatura
+            if (recipientUserId) {
+                const dueDate = new Date();
+                dueDate.setDate(dueDate.getDate() + 7); // Vencimento em 7 dias
+                const description = `Pacote de ${appointment_times.length} sessões com ${professionalName}. Desconto de ${discount_percentage}%.`;
+
+                const invoiceResult = await conn.query(
+                    'INSERT INTO invoices (user_id, creator_user_id, amount, due_date, description, status) VALUES (?, ?, ?, ?, ?, ?)',
+                    [recipientUserId, userId, total_value, dueDate, description, 'pending']
+                );
+                newPackageInvoiceId = invoiceResult.insertId; // Vincula os agendamentos a esta fatura
+            } else {
+                throw new Error('Não foi possível identificar um destinatário para a fatura do pacote.');
+            }
+        }
+
+        // ==========================================================
+        // --- EVENTO UNICO ---
+
+        if (frequency === 'Evento Único' || is_package) { // Pacotes são sempre 'Evento Único'
             appointment_times.forEach(time => {
                 appointmentsToCreate.push({
+                    series_id: null,
                     professional_id: professional_id,
                     patient_id: patient_id,
                     appointment_time: time,
-                    session_value: session_value || null
+                    session_value: session_value || null,
+                    status: newStatus,
+                    package_invoice_id: newPackageInvoiceId
                 });
             });
-        } else {
+        } else { // Lógica de recorrência (não é pacote)
              const seriesResult = await conn.query('INSERT INTO appointment_series (professional_id, patient_id, start_date, frequency, session_value) VALUES (?, ?, ?, ?, ?)', [professional_id, patient_id, initialDate, frequency, session_value]);
              const newSeriesId = seriesResult.insertId;
              let currentDate = initialDate;
@@ -1000,36 +988,77 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
              endDate.setMonth(initialDate.getMonth() + 3);
              const increment = (frequency === 'Semanalmente') ? 7 : 14;
              while (currentDate <= endDate) {
-                 appointmentsToCreate.push({ series_id: newSeriesId, professional_id, patient_id, appointment_time: new Date(currentDate), session_value: session_value || null });
+                 appointmentsToCreate.push({ 
+                     series_id: newSeriesId, professional_id, patient_id, 
+                     appointment_time: new Date(currentDate), 
+                     session_value: session_value || null,
+                     status: newStatus, // 'Agendada'
+                     package_invoice_id: null
+                 });
                  currentDate.setDate(currentDate.getDate() + increment);
              }
         }
         
         for (const app of appointmentsToCreate) {
-            await conn.query('INSERT INTO appointments (series_id, professional_id, patient_id, appointment_time, session_value, status) VALUES (?, ?, ?, ?, ?, ?)', [app.series_id || null, app.professional_id, app.patient_id, app.appointment_time, app.session_value, 'Agendada']);
+            await conn.query(
+                'INSERT INTO appointments (series_id, professional_id, patient_id, appointment_time, session_value, status, package_invoice_id) VALUES (?, ?, ?, ?, ?, ?, ?)', 
+                [app.series_id, app.professional_id, app.patient_id, app.appointment_time, app.session_value, app.status, app.package_invoice_id]
+            );
         }
         
         await conn.commit();
 
-        const [patientUser] = await conn.query("SELECT user_id FROM patients WHERE id = ?", [patient_id]);
-        if (patientUser && patientUser.user_id) {
-            const appointmentDate = new Date(appointment_times[0]).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
-            await createNotification(req, patientUser.user_id, 'new_appointment', `Seu profissional, ${professionalName}, agendou uma nova consulta para você em ${appointmentDate}.`);
-        }
+        // Se for pacote, notifica sobre a fatura
+        if (is_package && recipientUserId) {
+            await createNotification(
+                req,
+                recipientUserId,
+                'new_invoice',
+                `Nova cobrança de pacote (${professionalName}) no valor de ${total_value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`,
+                `/${recipientType}/financeiro`
+            );
 
-        // CORREÇÃO: Usando a função correta 'sendSchedulingEmail'
-        try {
-            const [patientData] = await conn.query(`SELECT p.nome, u.email FROM patients p JOIN users u ON p.user_id = u.id WHERE p.id = ?`, [patient_id]);
-            if (patientData && patientData.email) {
-                await sendSchedulingEmail( // <-- FUNÇÃO CORRIGIDA
-                    patientData.email,
-                    patientData.nome,
+            if (recipientEmail) {
+                await sendInvoiceNotificationEmail(
+                    recipientEmail,
+                    recipientName,
                     professionalName,
-                    new Date(appointment_times[0])
+                    total_value,
+                    new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Due date
+                    newPackageInvoiceId,
+                    `https://integrandoser.com.br/${recipientType}/financeiro`
                 );
             }
-        } catch (emailError) {
-            console.error("AVISO: Agendamento criado com sucesso, mas o e-mail de confirmação para o paciente falhou.", emailError);
+        }
+
+        const [patientUser] = await conn.query("SELECT user_id, nome, email FROM patients p JOIN users u ON p.user_id = u.id WHERE p.id = ?", [patient_id]);
+        if (patientUser && patientUser.user_id) {
+            const appointmentDate = new Date(appointment_times[0]).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+            const message = is_package 
+                ? `Seu profissional (${professionalName}) pré-agendou ${appointment_times.length} sessões. O agendamento será confirmado após o pagamento da fatura.`
+                : `Seu profissional (${professionalName}) agendou uma nova consulta para você em ${appointmentDate}.`;
+            
+            await createNotification(
+                req, 
+                patientUser.user_id, 
+                'new_appointment', 
+                message,
+                '/paciente/agenda'
+            );
+
+            // Envia e-mail de agendamento (apenas se não for pacote, para evitar e-mails duplicados)
+            if (!is_package) {
+                try {
+                    await sendSchedulingEmail(
+                        patientUser.email,
+                        patientUser.nome,
+                        professionalName,
+                        new Date(appointment_times[0])
+                    );
+                } catch (emailError) {
+                    console.error("AVISO: Agendamento criado, mas e-mail de confirmação falhou.", emailError);
+                }
+            }
         }
         
         res.status(201).json({ message: `${appointmentsToCreate.length} agendamento(s) criado(s) com sucesso!` });
