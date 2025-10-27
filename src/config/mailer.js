@@ -11,24 +11,36 @@ const transporter = nodemailer.createTransport({
 });
 */
 
-console.log('[Mailer Config] Tentando criar o transporter...');
+// Mantenha os logs para verificar as credenciais
+console.log('[Mailer Config] Tentando criar o transporter (Porta 465)...'); // Mensagem atualizada
 console.log(`[Mailer Config] Usando EMAIL_USER: ${process.env.EMAIL_USER}`);
-// Mascara a senha para segurança nos logs (mostra os 3 primeiros e os 3 últimos caracteres)
-const maskedPass = process.env.EMAIL_PASS
-    ? `${process.env.EMAIL_PASS.substring(0, 3)}****${process.env.EMAIL_PASS.substring(process.env.EMAIL_PASS.length - 3)}`
-    : 'NÃO DEFINIDO';
+const maskedPass = process.env.EMAIL_PASS ? `${process.env.EMAIL_PASS.substring(0, 3)}****${process.env.EMAIL_PASS.substring(process.env.EMAIL_PASS.length - 3)}` : 'NÃO DEFINIDO';
 console.log(`[Mailer Config] Usando EMAIL_PASS: ${maskedPass}`);
 
 const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com', // Ou o host SMTP do seu novo provedor
-    port: 587,             // Ou 465 se preferir SSL
-    secure: false,           // false para 587 (TLS), true para 465 (SSL)
-    requireTLS: true,       // Bom para porta 587
+    host: 'smtp.gmail.com',
+    port: 465,             // <-- VOLTAR PARA 465
+    secure: true,           // <-- true PARA 465 (SSL direto)
+    // requireTLS: true,    // Não necessário para port 465/secure:true
     auth: {
-        user: process.env.EMAIL_USER, // Deve ser a NOVA conta
-        pass: process.env.EMAIL_PASS  // Deve ser a NOVA Senha de App
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS  // A Senha de App
     },
-    connectionTimeout: 15000 // Mantém o timeout aumentado
+    connectionTimeout: 20000, // Aumenta ainda mais o timeout para 20 segundos
+    socketTimeout: 20000    // Adiciona timeout para o socket também
+});
+
+transporter.on('error', (error) => {
+    console.error('[Mailer Transporter Error] Erro detectado no transporter:', error);
+});
+
+// Tenta verificar a conexão ao iniciar (opcional, mas útil para diagnóstico rápido)
+transporter.verify(function(error, success) {
+  if (error) {
+        console.error('[Mailer Verify Error] Falha ao verificar conexão SMTP:', error);
+  } else {
+        console.log('[Mailer Verify Success] Conexão SMTP verificada com sucesso!');
+  }
 });
 
 const sendWelcomeEmail = async (to, tempPassword) => {
