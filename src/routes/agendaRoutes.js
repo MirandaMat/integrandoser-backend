@@ -1065,6 +1065,15 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
 
     } catch (error) {
         if (conn) await conn.rollback();
+        // --- ENHANCED LOGGING ---
+        console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        console.error("!!! ERROR in POST /professional/appointments !!!");
+        console.error("Timestamp:", new Date().toISOString());
+        console.error("User ID:", userId); // Log which user triggered the error
+        console.error("Request Body Snippet:", JSON.stringify(req.body).substring(0, 500)); // Log part of the incoming data
+        console.error("Error Object:", error); // Log the full error object (stack trace included!)
+        console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        // --- END ENHANCED LOGGING ---
         console.error("Erro ao criar agendamento pelo profissional:", error);
         res.status(500).json({ message: 'Erro interno no servidor ao processar o agendamento.' });
     } finally {
