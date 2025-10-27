@@ -180,6 +180,7 @@ router.get('/professionals-revenue', [protect, isAdmin], async (req, res) => {
     }
 });
 
+/*
 router.post('/invoices', [protect, isAdmin], async (req, res) => {
     const { userId, amount, dueDate, description } = req.body;
     const creatorUserId = req.user.id || req.user.userId; 
@@ -189,6 +190,7 @@ router.post('/invoices', [protect, isAdmin], async (req, res) => {
     }
 
     let conn; 
+    let invoiceId = null;
     try {
         conn = await db.getConnection(); 
         await conn.beginTransaction();
@@ -278,6 +280,122 @@ router.post('/invoices', [protect, isAdmin], async (req, res) => {
         res.status(500).json({ message: 'Erro ao gerar cobrança.' });
     } finally {
         if (conn) conn.release(); 
+    }
+});
+*/
+router.post('/invoices', [protect, isAdmin], async (req, res) => {
+    const { userId, amount, dueDate, description } = req.body; // userId aqui é o ID do profissional a ser cobrado
+    const creatorUserId = req.user.id || req.user.userId; // ID do Admin logado
+
+    if (!userId || !amount || !dueDate) {
+        return res.status(400).json({ message: 'Usuário, valor e data de vencimento são obrigatórios.' });
+    }
+
+    let conn;
+    let invoiceId = null; // Para log de erro do e-mail e resposta
+    let recipientUser = null; // Para guardar dados para e-mail pós-commit
+
+    try {
+        conn = await db.getConnection();
+        await conn.beginTransaction();
+
+        // Verificação de fatura recente (opcional, mantida da sua lógica original)
+        const [lastInvoice] = await conn.query(
+            "SELECT created_at FROM invoices WHERE user_id = ? AND creator_user_id = ? ORDER BY created_at DESC LIMIT 1",
+            [userId, creatorUserId]
+        );
+
+        if (lastInvoice) {
+            const lastInvoiceDate = new Date(lastInvoice.created_at);
+            const today = new Date();
+            const timeDifference = today.getTime() - lastInvoiceDate.getTime();
+            const daysDifference = timeDifference / (1000 * 60 * 60 * 24);
+
+            if (daysDifference < 15) { // Limite de 15 dias (ajuste se necessário)
+                await conn.rollback();
+                return res.status(403).json({
+                    message: `Já existe uma cobrança recente para este profissional. Tente novamente em ${Math.ceil(15 - daysDifference)} dias.`
+                });
+            }
+        }
+
+        // Cria a fatura
+        const result = await conn.query(
+            'INSERT INTO invoices (user_id, creator_user_id, amount, due_date, description, status) VALUES (?, ?, ?, ?, ?, ?)',
+            [userId, creatorUserId, amount, dueDate, description, 'pending']
+        );
+
+        // Obtém o ID da fatura criada
+        if (Array.isArray(result) && result[0] && result[0].insertId) {
+            invoiceId = result[0].insertId;
+        } else if (result && result.insertId) {
+            invoiceId = result.insertId;
+        } else {
+             // Se não conseguiu ID, é um erro crítico
+             throw new Error('Não foi possível obter o ID da fatura inserida.');
+        }
+
+        // Atualiza 'professional_billings' (se aplicável para faturas admin)
+        const [profProfile] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        if (profProfile) {
+            await conn.query(
+                "UPDATE professional_billings SET status = 'invoiced', invoice_id = ? WHERE professional_id = ? AND status = 'unbilled'",
+                [invoiceId, profProfile.id]
+            );
+        }
+
+        // Busca dados para e-mail/notificação antes do commit
+         [recipientUser] = await conn.query("SELECT p.nome, u.email FROM professionals p JOIN users u ON p.user_id = u.id WHERE p.user_id = ?", [userId]);
+
+        // <<< COMMIT AQUI >>>
+        await conn.commit();
+
+        // --- TENTATIVA DE ENVIO DE NOTIFICAÇÃO E E-MAIL (APÓS COMMIT) ---
+        try {
+            const amountFormatted = parseFloat(amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+            // Cria notificação no DB (e tenta via Socket)
+            await createNotification(
+                req,
+                userId, // O profissional que recebe a fatura
+                'new_invoice',
+                `Uma nova cobrança de ${amountFormatted} foi gerada pela administração.`,
+                '/professional/financeiro' // Link para as finanças do profissional
+            );
+
+            // Tenta enviar e-mail
+            if (recipientUser && recipientUser.email) {
+                await sendInvoiceNotificationEmail(
+                    recipientUser.email,
+                    recipientUser.nome,
+                    'Administração IntegrandoSer', // Nome do remetente
+                    amount,
+                    dueDate,
+                    invoiceId,
+                    'https://integrandoser.com.br/professional/financeiro' // Link
+                );
+            } else if (recipientUser) {
+                 console.warn(`AVISO [Fatura Admin ${invoiceId}]: Fatura criada, mas profissional ${recipientUser.nome} não possui e-mail cadastrado.`);
+            } else {
+                 console.warn(`AVISO [Fatura Admin ${invoiceId}]: Fatura criada, mas dados do profissional (ID ${userId}) não encontrados para envio de e-mail.`);
+            }
+        } catch (emailOrNotificationError) {
+            // Apenas loga o aviso
+            console.warn(`AVISO [Fatura Admin ${invoiceId}]: Fatura criada, mas notificação/email para profissional falhou:`, emailOrNotificationError);
+        }
+
+        // --- Resposta de Sucesso ---
+        res.status(201).json({
+            message: 'Cobrança gerada com sucesso!',
+            // Usando serializeBigInts apenas no ID para garantir que seja string se for BigInt
+            invoiceId: serializeBigInts(invoiceId)
+        });
+
+    } catch (error) { // Erros críticos (DB, permissão ANTES do commit)
+        if (conn) await conn.rollback();
+        console.error('Erro CRÍTICO ao criar fatura pelo admin:', error);
+        res.status(500).json({ message: 'Erro ao gerar cobrança.' });
+    } finally {
+        if (conn) conn.release();
     }
 });
 
@@ -1122,6 +1240,7 @@ const formatCurrency = (value) => {
 
 
 // Rota para criar uma fatura para um paciente (acessada por profissional)
+/*
 router.post('/professional/invoices/patient', [protect, isProfissional], async (req, res) => {
     const creatorUserId = req.user.id || req.user.userId;
     const { patientId, amount, description } = req.body;
@@ -1180,10 +1299,76 @@ router.post('/professional/invoices/patient', [protect, isProfissional], async (
         res.status(500).json({ message: 'Erro ao gerar cobrança.' });
     }
 });
+*/
+router.post('/professional/invoices/patient', [protect, isProfissional], async (req, res) => {
+    const creatorUserId = req.user.id || req.user.userId;
+    const { patientId, amount, description } = req.body;
+
+    if (!patientId || !amount || !description) {
+        return res.status(400).json({ message: 'Paciente, valor e descrição são obrigatórios.' });
+    }
+
+    const patientUserRows = await db.query("SELECT user_id FROM patients WHERE id = ?", [patientId]);
+    if (patientUserRows.length === 0) {
+        return res.status(404).json({ message: "Paciente não encontrado." });
+    }
+    const recipientUserId = patientUserRows[0].user_id;
+
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + 7);
+
+    try {
+        // Captura o resultado da inserção para obter o ID
+        const invoiceResult = await db.query(
+            'INSERT INTO invoices (user_id, creator_user_id, amount, due_date, description, status) VALUES (?, ?, ?, ?, ?, ?)',
+            [recipientUserId, creatorUserId, amount, dueDate.toISOString().split('T')[0], description, 'pending']
+        );
+
+        // Enviar notificação para o paciente
+        const [creatorProfile] = await db.query("SELECT nome FROM professionals WHERE user_id = ?", [creatorUserId]);
+        const creatorName = creatorProfile ? creatorProfile.nome : 'seu profissional';
+        const amountFormatted = parseFloat(amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        await createNotification(
+            req,
+            recipientUserId,
+            'new_invoice',
+            `Você recebeu uma cobrança de ${creatorName} no valor de ${amountFormatted}.`,
+            '/paciente/financeiro'
+        );
+
+        const [patientDetails] = await db.query("SELECT p.nome, u.email FROM patients p JOIN users u ON p.user_id = u.id WHERE p.id = ?", [patientId]);
+        if (patientDetails && patientDetails.email) {
+            try {
+                // Extrai o ID da fatura inserida
+                const invoiceId = (invoiceResult && invoiceResult[0]) ? invoiceResult[0].insertId : (invoiceResult ? invoiceResult.insertId : null);
+
+                if (invoiceId) {
+                    await sendInvoiceNotificationEmail(
+                        patientDetails.email,
+                        patientDetails.nome,
+                        creatorName,
+                        amount,
+                        dueDate,
+                        invoiceId, // Passa o ID correto
+                        'https://integrandoser.com.br/paciente/financeiro'
+                    );
+                } else {
+                    console.error("AVISO: Fatura criada, mas não foi possível obter o invoiceId para enviar o e-mail.");
+                }
+            } catch (emailError) {
+                console.error("AVISO: Fatura criada, mas o e-mail de notificação falhou.", emailError);
+            }
+        }
+
+        res.status(201).json({ message: 'Cobrança gerada com sucesso para o paciente!' });
+    } catch (error) {
+        console.error("Erro ao criar fatura para o paciente:", error);
+        res.status(500).json({ message: 'Erro ao gerar cobrança.' });
+    }
+});
 
 
-// server/src/routes/financeRoutes.js
-
+/*
 router.post('/professional/invoices/company', [protect, isProfissional], async (req, res) => {
     const creatorUserId = req.user.id || req.user.userId;
     const { companyId, amount, description } = req.body;
@@ -1220,6 +1405,53 @@ router.post('/professional/invoices/company', [protect, isProfissional], async (
             '/empresa/financeiro' // URL correta para a empresa
         );
         // ======================== FIM DA NOVA NOTIFICAÇÃO ========================
+
+        res.status(201).json({ message: 'Cobrança gerada com sucesso para a empresa!' });
+    } catch (error) {
+        console.error("Erro ao criar fatura para a empresa:", error);
+        res.status(500).json({ message: 'Erro ao gerar cobrança.' });
+    }
+});
+*/
+router.post('/professional/invoices/company', [protect, isProfissional], async (req, res) => {
+    const creatorUserId = req.user.id || req.user.userId;
+    const { companyId, amount, description } = req.body;
+
+    if (!companyId || !amount || !description) {
+        return res.status(400).json({ message: 'Empresa, valor e descrição são obrigatórios.' });
+    }
+
+    const companyUserRows = await db.query("SELECT user_id FROM companies WHERE id = ?", [companyId]);
+    if (companyUserRows.length === 0) {
+        return res.status(404).json({ message: "Empresa não encontrada." });
+    }
+    const recipientUserId = companyUserRows[0].user_id;
+
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + 7);
+
+    try {
+        // (Nota: Para enviar e-mail, seria necessário capturar o 'invoiceResult' como na rota do paciente)
+        await db.query(
+            'INSERT INTO invoices (user_id, creator_user_id, amount, due_date, description, status) VALUES (?, ?, ?, ?, ?, ?)',
+            [recipientUserId, creatorUserId, amount, dueDate.toISOString().split('T')[0], description, 'pending']
+        );
+        
+        // ======================= INÍCIO DA NOVA NOTIFICAÇÃO =======================
+        const [creatorProfile] = await db.query("SELECT nome FROM professionals WHERE user_id = ?", [creatorUserId]);
+        const creatorName = creatorProfile ? creatorProfile.nome : 'um profissional';
+        const amountFormatted = parseFloat(amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        
+        await createNotification(
+            req,
+            recipientUserId,
+            'new_invoice',
+            `Sua empresa recebeu uma cobrança de ${creatorName} no valor de ${amountFormatted}.`,
+            '/empresa/financeiro' // URL correta para a empresa
+        );
+        // ======================== FIM DA NOVA NOTIFICAÇÃO ========================
+        
+        // (Opcional: Bloco de envio de e-mail poderia ser adicionado aqui, similar à rota /patient)
 
         res.status(201).json({ message: 'Cobrança gerada com sucesso para a empresa!' });
     } catch (error) {
@@ -1364,7 +1596,78 @@ router.get('/invoices/:invoiceId/payment-details', protect, async (req, res) => 
 });
 
 // ROTA PARA O USUÁRIO ENVIAR O COMPROVANTE
-// ROTA PARA O USUÁRIO ENVIAR O COMPROVANTE (VERSÃO FINAL E COMPLETA)
+/*
+router.post('/invoices/:invoiceId/upload-receipt', [protect, upload.single('receipt')], async (req, res) => {
+    const { invoiceId } = req.params;
+    const userId = req.user.id || req.user.userId;
+    if (!req.file) return res.status(400).json({ message: 'Nenhum arquivo enviado ou tipo inválido.' });
+    
+    let conn;
+    try {
+        conn = await db.getConnection(); 
+        const receiptUrl = req.file.path;
+        
+        // 1. Atualiza a fatura no banco de dados
+        await conn.query("UPDATE invoices SET receipt_url = ?, status = 'paid' WHERE id = ? AND user_id = ?", [receiptUrl, invoiceId, userId]);
+
+        // 2. Busca a fatura recém-atualizada para obter todos os dados necessários
+        const [updatedInvoice] = await conn.query("SELECT * FROM invoices WHERE id = ?", [invoiceId]);
+        
+        // 3. Bloco de notificação (em tempo real e por e-mail)
+        if (updatedInvoice && updatedInvoice.creator_user_id) {
+            // Busca o nome de quem enviou o comprovante
+            const [uploaderProfile] = await conn.query(`SELECT COALESCE(p.nome, prof.nome, c.nome_empresa, a.nome) as name FROM users u LEFT JOIN patients p ON u.id = p.user_id LEFT JOIN professionals prof ON u.id = prof.user_id LEFT JOIN companies c ON u.id = c.user_id LEFT JOIN administrators a ON u.id = a.user_id WHERE u.id = ?`, [userId]);
+            const uploaderName = uploaderProfile ? uploaderProfile.name : 'Um usuário';
+
+            // Busca o papel do criador da fatura para montar a URL correta
+            const [creatorUser] = await conn.query("SELECT r.name as role FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ?", [updatedInvoice.creator_user_id]);
+            const creatorRole = creatorUser ? creatorUser.role.toLowerCase() : 'admin';
+            let notificationUrl = `/${creatorRole}/financeiro`;
+            if (creatorRole === 'admin') notificationUrl = '/admin/financeiro/faturas';
+            if (creatorRole === 'professional') notificationUrl = '/professional/cobrancas';
+
+            // Envia a notificação em tempo real
+            await createNotification(
+                req,
+                updatedInvoice.creator_user_id,
+                'payment_received',
+                `${uploaderName} enviou um comprovante para a fatura #${invoiceId}.`,
+                notificationUrl // Passa a URL dinâmica
+            );
+            
+            // Busca os detalhes do criador para enviar o e-mail
+            const [creatorDetails] = await conn.query("SELECT u.email, COALESCE(prof.nome, a.nome) as name FROM users u LEFT JOIN professionals prof ON u.id = prof.user_id LEFT JOIN administrators a ON u.id = a.user_id WHERE u.id = ?", [updatedInvoice.creator_user_id]);
+            
+            if (creatorDetails && creatorDetails.email) {
+                try {
+                    // Envia o e-mail de notificação
+                    await sendReceiptUploadNotificationEmail(
+                        creatorDetails.email,
+                        creatorDetails.name || 'Admin',
+                        uploaderName,
+                        invoiceId,
+                        `https://integrandoser.com.br/${notificationUrl}`
+                    );
+                } catch (emailError) {
+                    console.error("AVISO: Comprovante salvo, mas o e-mail de notificação falhou.", emailError);
+                }
+            }
+        }
+
+        // 4. Responde ao frontend com a fatura atualizada para evitar a "race condition"
+        res.json({ 
+            message: 'Comprovante enviado e fatura marcada como paga!',
+            invoice: serializeBigInts(updatedInvoice) // Enviando os dados atualizados
+        });
+
+    } catch (error) {
+        console.error("Erro ao salvar comprovante:", error);
+        res.status(500).json({ message: 'Erro ao salvar comprovante.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+*/
 router.post('/invoices/:invoiceId/upload-receipt', [protect, upload.single('receipt')], async (req, res) => {
     const { invoiceId } = req.params;
     const userId = req.user.id || req.user.userId;

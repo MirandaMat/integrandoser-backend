@@ -130,7 +130,16 @@ router.get('/all-appointments', protect, isAdmin, async (req, res) => {
                 pat.id as patient_id, pat.nome as patient_name, pat.imagem_url as patient_photo,
                 comp.nome_empresa as company_name,
                 CASE
-                    WHEN a.status = 'Agendada' AND a.appointment_time < NOW() - INTERVAL 30 MINUTE THEN 1
+                    /* Lembrar apenas se:
+                     * 1. Status for 'Agendada'
+                     * 2. O horário já passou (ajustado para UTC-3)
+                     * 3. NÃO for parte de um pacote (package_invoice_id IS NULL)
+                     */
+                    WHEN 
+                        a.status = 'Agendada' 
+                        AND a.appointment_time < (NOW() - INTERVAL 3 HOUR - INTERVAL 30 MINUTE)
+                        AND a.package_invoice_id IS NULL
+                    THEN 1
                     ELSE 0
                 END AS is_pending_review
             FROM appointments a
@@ -535,7 +544,16 @@ router.get('/my-appointments/professional', protect, async (req, res) => {
                 a.session_value, a.package_invoice_id,
                 p.id as patient_id, p.user_id as patient_user_id, p.nome AS patient_name, p.imagem_url as patient_photo,
                 CASE
-                    WHEN a.status = 'Agendada' AND a.appointment_time < NOW() - INTERVAL 30 MINUTE THEN 1
+                    /* Lembrar apenas se:
+                     * 1. Status for 'Agendada'
+                     * 2. O horário já passou (ajustado para UTC-3)
+                     * 3. NÃO for parte de um pacote (package_invoice_id IS NULL)
+                     */
+                    WHEN 
+                        a.status = 'Agendada' 
+                        AND a.appointment_time < (NOW() - INTERVAL 3 HOUR - INTERVAL 30 MINUTE)
+                        AND a.package_invoice_id IS NULL
+                    THEN 1
                     ELSE 0
                 END AS is_pending_review
             FROM appointments a
@@ -653,8 +671,8 @@ router.get('/future-appointments', protect, async (req, res) => {
 });
 
 
-
 // Rota para o PROFISSIONAL atualizar o status de um agendamento (COM FATURAMENTO AUTOMÁTICO)
+/*
 router.patch('/appointments/:id/status', protect, isProfissional, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
@@ -666,6 +684,7 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
     }
 
     let conn;
+    let newInvoiceId = null;
     try {
         conn = await pool.getConnection();
         await conn.beginTransaction(); // Inicia a transação
@@ -677,13 +696,13 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
         }
         const professionalId = profs[0].id;
 
-        /*
-        const apps = await conn.query('SELECT professional_id FROM appointments WHERE id = ?', [id]);
-        if (apps.length === 0 || apps[0].professional_id.toString() !== professionalId.toString()) {
-            await conn.rollback();
-            return res.status(403).json({ message: 'Você não tem permissão para alterar este agendamento.' });
-        }
-        */
+        
+        //const apps = await conn.query('SELECT professional_id FROM appointments WHERE id = ?', [id]);
+        //if (apps.length === 0 || apps[0].professional_id.toString() !== professionalId.toString()) {
+        //    await conn.rollback();
+        //    return res.status(403).json({ message: 'Você não tem permissão para alterar este agendamento.' });
+        //}
+        
        // Modificado: Busca também o status atual e o package_invoice_id
         const [app] = await conn.query('SELECT professional_id, status as current_status, package_invoice_id FROM appointments WHERE id = ?', [id]);
         
@@ -834,7 +853,194 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
         if (conn) conn.release();
     }
 });
+*/
+router.patch('/appointments/:id/status', protect, isProfissional, async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+    const { userId } = req.user; // ID do profissional logado
 
+    // Validações
+    const validStatuses = ['Agendada', 'Concluída', 'Cancelada'];
+    if (!status || !validStatuses.includes(status)) {
+        return res.status(400).json({ message: 'Status inválido.' });
+    }
+
+    let conn;
+    // Variáveis para guardar dados necessários para notificações/e-mails PÓS-commit
+    let newInvoiceId = null;
+    let recipientUserId = null;
+    let recipientName = '';
+    let recipientEmail = '';
+    let recipientType = '';
+    let grossValueForEmail = 0; // Guardar valor para e-mail
+    let appointmentDetailsForEmail = null; // Guardar detalhes para e-mail e notificação
+
+    try {
+        conn = await pool.getConnection();
+        await conn.beginTransaction(); // Inicia a transação
+
+        // Verifica se o usuário logado é um profissional válido
+        const [profProfile] = await conn.query('SELECT id FROM professionals WHERE user_id = ?', [userId]);
+        if (!profProfile || profProfile.length === 0) {
+            await conn.rollback();
+            return res.status(403).json({ message: 'Perfil profissional não encontrado.' });
+        }
+        const professionalId = profProfile.id;
+
+        // Busca o agendamento, seu status atual e se pertence a um pacote
+        const [app] = await conn.query('SELECT professional_id, status as current_status, package_invoice_id FROM appointments WHERE id = ? FOR UPDATE', [id]); // FOR UPDATE para lock
+
+        // Verifica permissão
+        if (!app || app.professional_id.toString() !== professionalId.toString()) {
+            await conn.rollback();
+            return res.status(403).json({ message: 'Você não tem permissão para alterar este agendamento.' });
+        }
+
+        // Regra: Não pode mudar status (exceto Cancelar) se for de pacote pendente
+        if (app.current_status === 'Aguardando Pagamento' && status !== 'Cancelada') {
+            await conn.rollback();
+            return res.status(403).json({ message: 'Esta consulta aguarda o pagamento do pacote. Você só pode cancelá-la.' });
+        }
+
+        // Atualiza o status do agendamento
+        await conn.query('UPDATE appointments SET status = ? WHERE id = ?', [status, id]);
+
+        // Lógica de Faturamento para status 'Concluída' (se não for de pacote)
+        if (status === 'Concluída' && !app.package_invoice_id) {
+            // Busca detalhes APENAS se precisar faturar
+            const [appointmentDetails] = await conn.query(
+                "SELECT professional_id, patient_id, session_value, appointment_time FROM appointments WHERE id = ?",
+                [id]
+            );
+            appointmentDetailsForEmail = appointmentDetails; // Guarda para usar depois do commit
+
+            if (appointmentDetails && appointmentDetails.session_value > 0) {
+                grossValueForEmail = parseFloat(appointmentDetails.session_value); // Guarda para email
+                const commissionValue = grossValueForEmail * 0.25;
+
+                // 1. Cria registro interno para comissão
+                await conn.query(
+                    `INSERT IGNORE INTO professional_billings (professional_id, appointment_id, billing_date, gross_value, commission_value, status) VALUES (?, ?, ?, ?, ?, ?)`,
+                    [appointmentDetails.professional_id, id, new Date(appointmentDetails.appointment_time), grossValueForEmail, commissionValue, 'unbilled']
+                );
+
+                // 2. Identifica o pagador
+                const [patientDetails] = await conn.query("SELECT user_id, company_id, nome FROM patients WHERE id = ?", [appointmentDetails.patient_id]);
+
+                if (patientDetails) {
+                    // Lógica para determinar recipientUserId, recipientName, recipientEmail, recipientType (empresa ou paciente)
+                    if (patientDetails.company_id) {
+                        const [companyDetails] = await conn.query(/* ... busca dados empresa ... */);
+                        if (companyDetails) { /* ... define recipient vars ... */
+                             recipientUserId = companyDetails.user_id;
+                            recipientName = companyDetails.name;
+                            recipientEmail = companyDetails.email;
+                            recipientType = 'empresa';
+                        }
+                    }
+                    if (!recipientUserId) { // Cobra o paciente
+                        const [userPatientDetails] = await conn.query(/* ... busca dados paciente ... */);
+                        if (userPatientDetails) { /* ... define recipient vars ... */
+                             recipientUserId = userPatientDetails.user_id;
+                            recipientName = userPatientDetails.name;
+                            recipientEmail = userPatientDetails.email;
+                            recipientType = 'paciente';
+                        }
+                    }
+
+                    // 3. Cria a fatura se encontrou pagador
+                    if (recipientUserId) {
+                        const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + 15);
+                        const description = `Referente à sessão com ${patientDetails.nome} em ${new Date(appointmentDetails.appointment_time).toLocaleDateString('pt-BR')}.`;
+                        const invoiceResult = await conn.query(
+                            'INSERT INTO invoices (user_id, creator_user_id, amount, due_date, description, status) VALUES (?, ?, ?, ?, ?, ?)',
+                            [recipientUserId, userId, grossValueForEmail, dueDate, description, 'pending']
+                        );
+                        newInvoiceId = invoiceResult.insertId; // Guarda ID para notificação/email PÓS-commit
+                    }
+                }
+            }
+        } else {
+             // Se não for 'Concluída' ou for de pacote, busca detalhes só para notificação de status
+             const [appointmentDetails] = await conn.query( "SELECT professional_id, patient_id, session_value, appointment_time FROM appointments WHERE id = ?", [id] );
+             appointmentDetailsForEmail = appointmentDetails;
+        }
+
+        // <<< COMMIT AQUI >>>
+        // Confirma as operações do banco de dados (UPDATE status, INSERT professional_billings, INSERT invoices)
+        await conn.commit();
+
+        // --- TENTATIVA DE ENVIO DE NOTIFICAÇÕES E E-MAILS (APÓS COMMIT) ---
+        // Estas operações agora rodam fora da transação do banco. Se falharem,
+        // as alterações no banco JÁ ESTÃO SALVAS e a resposta ao usuário será de sucesso.
+
+        // 1. Tenta enviar notificação e e-mail da FATURA (se foi criada nesta chamada)
+        if (newInvoiceId && recipientUserId) {
+            try {
+                const [creatorProfile] = await conn.query("SELECT nome FROM professionals WHERE user_id = ?", [userId]); // Busca nome fora da TX
+                const creatorName = creatorProfile ? creatorProfile.nome : 'seu profissional';
+                const dueDateForEmail = new Date(); dueDateForEmail.setDate(dueDateForEmail.getDate() + 15); // Recalcula
+
+                // Envia notificação via Socket.IO e salva no DB
+                await createNotification(
+                    req, recipientUserId, 'new_invoice',
+                    `Nova cobrança de ${creatorName} no valor de ${grossValueForEmail.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`,
+                    `/${recipientType}/financeiro`
+                );
+
+                // Tenta enviar e-mail
+                if (recipientEmail) {
+                    await sendInvoiceNotificationEmail(
+                        recipientEmail, recipientName, creatorName, grossValueForEmail, dueDateForEmail, newInvoiceId,
+                        `https://integrandoser.com.br/${recipientType}/financeiro`
+                    );
+                }
+            } catch (invoiceEmailOrNotificationError) {
+                // Apenas loga o aviso, não quebra a requisição
+                console.warn(`AVISO [Fatura ${newInvoiceId}]: Status da consulta ${id} atualizado e fatura criada, mas notificação/email para pagador falhou:`, invoiceEmailOrNotificationError);
+            }
+        }
+
+        // 2. Tenta enviar notificações de ATUALIZAÇÃO DE STATUS (Socket + DB)
+        try {
+            const io = req.app.get('io');
+            if (io) {
+                 io.emit('appointmentStatusChanged'); // Notifica todos os clients conectados
+                 console.log(`[Socket Emit] Evento 'appointmentStatusChanged' emitido globalmente devido à atualização da consulta ${id}.`);
+            } else {
+                 console.warn(`AVISO [Consulta ${id}]: Instância do Socket.IO não encontrada. Não foi possível emitir 'appointmentStatusChanged'.`);
+            }
+
+
+            // Notifica especificamente o paciente via DB (e Socket se online)
+            if (appointmentDetailsForEmail && appointmentDetailsForEmail.patient_id) { // Usa os detalhes guardados
+                const [patientUser] = await conn.query("SELECT user_id FROM patients WHERE id = ?", [appointmentDetailsForEmail.patient_id]);
+                if (patientUser && patientUser.user_id) {
+                    const appointmentDate = new Date(appointmentDetailsForEmail.appointment_time).toLocaleDateString('pt-BR');
+                    await createNotification(
+                        req, patientUser.user_id, 'appointment_rescheduled', // re-usando tipo
+                        `O status da sua consulta de ${appointmentDate} foi atualizado para: ${status}.`,
+                        '/paciente/agenda'
+                    );
+                }
+            }
+        } catch (statusNotificationError) {
+            // Apenas loga o aviso
+            console.warn(`AVISO [Consulta ${id}]: Status atualizado para ${status}, mas notificação para paciente falhou:`, statusNotificationError);
+        }
+
+        // --- Resposta de Sucesso Final ---
+        // Retorna sucesso mesmo que e-mails/notificações tenham falhado após o commit
+        res.json({ message: 'Status atualizado com sucesso!' + (newInvoiceId ? ' Fatura gerada.' : '') });
+
+    } catch (error) { // Captura erros CRÍTICOS ocorridos ANTES do commit (DB, permissão)
+        if (conn) await conn.rollback(); // Garante rollback se o erro foi antes do commit
+        console.error(`Erro CRÍTICO ao atualizar status da consulta ${id} para ${status} (antes do commit):`, error);
+        res.status(500).json({ message: 'Erro crítico ao processar a solicitação no banco de dados.' });
+    } finally {
+        if (conn) conn.release(); // Libera a conexão com o banco
+    }
+});
 
 
 // ========== Profissional Habilitado ============
@@ -899,6 +1105,8 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
     }
 
     let conn;
+    let newPackageInvoiceId = null; // Mova a declaração para fora do try para usar no log de erro
+    let appointmentsCreatedCount = 0;
     try {
         conn = await pool.getConnection();
         await conn.beginTransaction();
@@ -965,8 +1173,11 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
                     [recipientUserId, userId, total_value, dueDate, description, 'pending']
                 );
                 newPackageInvoiceId = invoiceResult.insertId; // Vincula os agendamentos a esta fatura
+                
             } else {
-                throw new Error('Não foi possível identificar um destinatário para a fatura do pacote.');
+                await conn.rollback();
+                return res.status(400).json({ message: 'Não foi possível identificar um destinatário para a fatura do pacote.' });
+                //throw new Error('Não foi possível identificar um destinatário para a fatura do pacote.');
             }
         }
 
@@ -1010,6 +1221,8 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
                 [app.series_id, app.professional_id, app.patient_id, app.appointment_time, app.session_value, app.status, app.package_invoice_id]
             );
         }
+
+        appointmentsCreatedCount = appointmentsToCreate.length;
         
         await conn.commit();
 
@@ -1092,92 +1305,7 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
     }
 });
 
-// Rota para o PROFISSIONAL ATUALIZAR um agendamento
-/*
-router.put('/professional/appointments/:id', protect, isProfissional, async (req, res) => {
-    const { id } = req.params;
-    // Removido 'professional_id' pois o profissional não deve alterá-lo
-    const { patient_id, appointment_time, session_value } = req.body;
-    const { userId } = req.user;
 
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        await conn.beginTransaction();
-
-        // Busca o perfil do profissional para obter o ID e fazer a verificação de permissão
-        const [profProfile] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
-        if (!profProfile) {
-            await conn.rollback();
-            return res.status(403).json({ message: 'Perfil profissional não encontrado.' });
-        }
-        const professionalId = profProfile.id;
-
-        // NOVO: Lógica para construir a query de atualização dinamicamente
-        const fieldsToUpdate = [];
-        const values = [];
-
-        if (patient_id !== undefined) {
-            fieldsToUpdate.push('patient_id = ?');
-            values.push(patient_id);
-        }
-        if (appointment_time !== undefined) {
-            fieldsToUpdate.push('appointment_time = ?');
-            values.push(appointment_time);
-        }
-        if (session_value !== undefined) {
-            fieldsToUpdate.push('session_value = ?');
-            values.push(session_value);
-        }
-
-        // NOVO: Validação para garantir que pelo menos um campo foi enviado
-        if (fieldsToUpdate.length === 0) {
-            await conn.rollback();
-            return res.status(400).json({ message: 'Nenhum campo para atualizar foi fornecido.' });
-        }
-
-        // Adiciona os valores para a cláusula WHERE
-        values.push(id);
-        values.push(professionalId);
-        
-        const setClause = fieldsToUpdate.join(', ');
-        const query = `UPDATE appointments SET ${setClause} WHERE id = ? AND professional_id = ?`;
-        
-        const result = await conn.query(query, values);
-
-        if (result.affectedRows === 0) {
-            await conn.rollback();
-            return res.status(404).json({ message: 'Agendamento não encontrado ou você não tem permissão para editá-lo.' });
-        }
-        
-        await conn.commit();
-        
-        // Lógica de notificação
-        const finalPatientId = patient_id || (await conn.query("SELECT patient_id FROM appointments WHERE id = ?", [id]))[0].patient_id;
-        const finalAppointmentTime = appointment_time || new Date();
-
-        const [patientUser] = await conn.query("SELECT user_id FROM patients WHERE id = ?", [finalPatientId]);
-        if (patientUser && patientUser.user_id) {
-            const appointmentDate = new Date(finalAppointmentTime).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
-            await createNotification(
-                req,
-                patientUser.user_id,
-                'appointment_rescheduled',
-                `Seu agendamento foi alterado para ${appointmentDate} pelo seu profissional.`,
-                '/paciente/agenda'
-            );
-        }
-        
-        res.json({ message: 'Agendamento atualizado com sucesso!' });
-    } catch (error) {
-        if (conn) await conn.rollback();
-        console.error("Erro ao atualizar agendamento:", error);
-        res.status(500).json({ message: 'Erro ao atualizar agendamento.' });
-    } finally {
-        if (conn) conn.release();
-    }
-});
-*/
 router.put('/professional/appointments/:id', protect, isProfissional, async (req, res) => {
     const { id } = req.params;
     const { patient_id, appointment_time, session_value } = req.body;
