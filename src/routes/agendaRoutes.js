@@ -984,6 +984,8 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
     }
 });
 */
+
+
 router.patch('/appointments/:id/status', protect, isProfissional, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
@@ -1004,6 +1006,7 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
     let recipientType = '';
     let grossValueForEmail = 0; // Guardar valor para e-mail
     let appointmentDetailsForEmail = null; // Guardar detalhes para e-mail e notificação
+    let dueDateForEmail = null; // Guardar data de vencimento
 
     try {
         conn = await pool.getConnection();
@@ -1060,28 +1063,42 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
                 if (patientDetails) {
                     // Lógica para determinar recipientUserId, recipientName, recipientEmail, recipientType (empresa ou paciente)
                     if (patientDetails.company_id) {
-                        const [companyDetails] = await conn.query(/* ... busca dados empresa ... */);
-                        if (companyDetails) { /* ... define recipient vars ... */
+                        // ==========================================================
+                        // --- CORREÇÃO (SQL real no lugar do comentário) ---
+                        const [companyDetails] = await conn.query(
+                            "SELECT u.id as user_id, c.nome_empresa as name, u.email FROM companies c JOIN users u ON c.user_id = u.id WHERE c.id = ?",
+                            [patientDetails.company_id]
+                        );
+                        // ==========================================================
+                        if (companyDetails) { 
                              recipientUserId = companyDetails.user_id;
-                            recipientName = companyDetails.name;
-                            recipientEmail = companyDetails.email;
-                            recipientType = 'empresa';
+                             recipientName = companyDetails.name;
+                             recipientEmail = companyDetails.email;
+                             recipientType = 'empresa';
                         }
                     }
                     if (!recipientUserId) { // Cobra o paciente
-                        const [userPatientDetails] = await conn.query(/* ... busca dados paciente ... */);
-                        if (userPatientDetails) { /* ... define recipient vars ... */
+                        // ==========================================================
+                        // --- CORREÇÃO (SQL real no lugar do comentário) ---
+                        const [userPatientDetails] = await conn.query(
+                            "SELECT u.id as user_id, p.nome as name, u.email FROM patients p JOIN users u ON p.user_id = u.id WHERE p.id = ?",
+                            [appointmentDetails.patient_id]
+                        );
+                        // ==========================================================
+                        if (userPatientDetails) { 
                              recipientUserId = userPatientDetails.user_id;
-                            recipientName = userPatientDetails.name;
-                            recipientEmail = userPatientDetails.email;
-                            recipientType = 'paciente';
+                             recipientName = userPatientDetails.name;
+                             recipientEmail = userPatientDetails.email;
+                             recipientType = 'paciente';
                         }
                     }
 
                     // 3. Cria a fatura se encontrou pagador
                     if (recipientUserId) {
                         const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + 15);
+                        dueDateForEmail = dueDate; // Guarda para e-mail
                         const description = `Referente à sessão com ${patientDetails.nome} em ${new Date(appointmentDetails.appointment_time).toLocaleDateString('pt-BR')}.`;
+                        
                         const invoiceResult = await conn.query(
                             'INSERT INTO invoices (user_id, creator_user_id, amount, due_date, description, status) VALUES (?, ?, ?, ?, ?, ?)',
                             [recipientUserId, userId, grossValueForEmail, dueDate, description, 'pending']
@@ -1097,19 +1114,16 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
         }
 
         // <<< COMMIT AQUI >>>
-        // Confirma as operações do banco de dados (UPDATE status, INSERT professional_billings, INSERT invoices)
         await conn.commit();
 
         // --- TENTATIVA DE ENVIO DE NOTIFICAÇÕES E E-MAILS (APÓS COMMIT) ---
-        // Estas operações agora rodam fora da transação do banco. Se falharem,
-        // as alterações no banco JÁ ESTÃO SALVAS e a resposta ao usuário será de sucesso.
 
         // 1. Tenta enviar notificação e e-mail da FATURA (se foi criada nesta chamada)
         if (newInvoiceId && recipientUserId) {
             try {
-                const [creatorProfile] = await conn.query("SELECT nome FROM professionals WHERE user_id = ?", [userId]); // Busca nome fora da TX
+                // Tivemos que buscar o 'conn' de novo pois o 'pool' não está no escopo aqui
+                const [creatorProfile] = await pool.query("SELECT nome FROM professionals WHERE user_id = ?", [userId]); // Busca nome fora da TX
                 const creatorName = creatorProfile ? creatorProfile.nome : 'seu profissional';
-                const dueDateForEmail = new Date(); dueDateForEmail.setDate(dueDateForEmail.getDate() + 15); // Recalcula
 
                 // Envia notificação via Socket.IO e salva no DB
                 await createNotification(
@@ -1126,7 +1140,6 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
                     );
                 }
             } catch (invoiceEmailOrNotificationError) {
-                // Apenas loga o aviso, não quebra a requisição
                 console.warn(`AVISO [Fatura ${newInvoiceId}]: Status da consulta ${id} atualizado e fatura criada, mas notificação/email para pagador falhou:`, invoiceEmailOrNotificationError);
             }
         }
@@ -1135,16 +1148,16 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
         try {
             const io = req.app.get('io');
             if (io) {
-                 io.emit('appointmentStatusChanged'); // Notifica todos os clients conectados
+                 io.emit('appointmentStatusChanged');
                  console.log(`[Socket Emit] Evento 'appointmentStatusChanged' emitido globalmente devido à atualização da consulta ${id}.`);
             } else {
                  console.warn(`AVISO [Consulta ${id}]: Instância do Socket.IO não encontrada. Não foi possível emitir 'appointmentStatusChanged'.`);
             }
 
-
             // Notifica especificamente o paciente via DB (e Socket se online)
             if (appointmentDetailsForEmail && appointmentDetailsForEmail.patient_id) { // Usa os detalhes guardados
-                const [patientUser] = await conn.query("SELECT user_id FROM patients WHERE id = ?", [appointmentDetailsForEmail.patient_id]);
+                // Tivemos que buscar o 'conn' de novo pois o 'pool' não está no escopo aqui
+                const [patientUser] = await pool.query("SELECT user_id FROM patients WHERE id = ?", [appointmentDetailsForEmail.patient_id]);
                 if (patientUser && patientUser.user_id) {
                     const appointmentDate = new Date(appointmentDetailsForEmail.appointment_time).toLocaleDateString('pt-BR');
                     await createNotification(
@@ -1155,12 +1168,10 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
                 }
             }
         } catch (statusNotificationError) {
-            // Apenas loga o aviso
             console.warn(`AVISO [Consulta ${id}]: Status atualizado para ${status}, mas notificação para paciente falhou:`, statusNotificationError);
         }
 
         // --- Resposta de Sucesso Final ---
-        // Retorna sucesso mesmo que e-mails/notificações tenham falhado após o commit
         res.json({ message: 'Status atualizado com sucesso!' + (newInvoiceId ? ' Fatura gerada.' : '') });
 
     } catch (error) { // Captura erros CRÍTICOS ocorridos ANTES do commit (DB, permissão)
@@ -1171,6 +1182,7 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
         if (conn) conn.release(); // Libera a conexão com o banco
     }
 });
+
 
 
 // ========== Profissional Habilitado ============
