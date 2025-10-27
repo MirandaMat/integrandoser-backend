@@ -256,7 +256,7 @@ router.post('/invoices', [protect, isAdmin], async (req, res) => {
                         amount,
                         dueDate,
                         invoiceId,
-                        'http://localhost:5173/professional/financeiro' // Link para a página de finanças do profissional
+                        'https://integrandoser.com.br/professional/financeiro' // Link para a página de finanças do profissional
                     );
                 } catch (emailError) {
                     console.error("AVISO: Fatura criada, mas o e-mail de notificação falhou.", emailError);
@@ -1167,7 +1167,7 @@ router.post('/professional/invoices/patient', [protect, isProfissional], async (
                     amount,
                     dueDate,
                     invoiceResult.insertId, // Assumindo que a query de INSERT retorna o ID
-                    'http://localhost:5173/paciente/financeiro'
+                    'https://integrandoser.com.br/paciente/financeiro'
                 );
             } catch (emailError) {
                 console.error("AVISO: Fatura criada, mas o e-mail de notificação falhou.", emailError);
@@ -1414,7 +1414,7 @@ router.post('/invoices/:invoiceId/upload-receipt', [protect, upload.single('rece
                         creatorDetails.name || 'Admin',
                         uploaderName,
                         invoiceId,
-                        `http://localhost:5173${notificationUrl}`
+                        `https://integrandoser.com.br/${notificationUrl}`
                     );
                 } catch (emailError) {
                     console.error("AVISO: Comprovante salvo, mas o e-mail de notificação falhou.", emailError);

@@ -1,12 +1,33 @@
 // server/src/config/mailer.js
 const nodemailer = require('nodemailer');
 
+/*
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
     }
+});
+*/
+
+console.log('[Mailer Config] Tentando criar o transporter...');
+console.log(`[Mailer Config] Usando EMAIL_USER: ${process.env.EMAIL_USER}`);
+// Mascara a senha para segurança nos logs (mostra os 3 primeiros e os 3 últimos caracteres)
+const maskedPass = process.env.EMAIL_PASS
+    ? `${process.env.EMAIL_PASS.substring(0, 3)}****${process.env.EMAIL_PASS.substring(process.env.EMAIL_PASS.length - 3)}`
+    : 'NÃO DEFINIDO';
+console.log(`[Mailer Config] Usando EMAIL_PASS: ${maskedPass}`);
+
+const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com', // Servidor SMTP do Gmail
+    port: 465, // Porta SSL
+    secure: true, // Usar SSL
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS // Certifique-se que é a Senha de App
+    },
+    connectionTimeout: 10000 // Aumenta um pouco o timeout para 10 segundos (opcional)
 });
 
 const sendWelcomeEmail = async (to, tempPassword) => {
@@ -24,7 +45,7 @@ const sendWelcomeEmail = async (to, tempPassword) => {
                     <li><strong>Senha Temporária:</strong> ${tempPassword}</li>
                 </ul>
                 <p>Você será solicitado(a) a completar seu perfil e definir uma nova senha no seu primeiro login.</p>
-                <p>Acesse a plataforma em: <a href="http://localhost:5173/login">Fazer Login</a></p>
+                <p>Acesse a plataforma em: <a href="https://integrandoser.com.br/login">Fazer Login</a></p>
                 <br>
                 <p>Atenciosamente,</p>
                 <p><strong>Equipe IntegrandoSer</strong></p>
