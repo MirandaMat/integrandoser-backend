@@ -784,15 +784,20 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
                         );
 
                         if (recipientEmail) {
-                            await sendInvoiceNotificationEmail(
-                                recipientEmail,
-                                recipientName,
-                                creatorName,
-                                grossValue,
-                                dueDate,
-                                newInvoiceId,
-                                `https://integrandoser.com.br/${recipientType}/financeiro`
-                            );
+                            try { // Bloco try/catch para o e-mail
+                                await sendInvoiceNotificationEmail(
+                                    recipientEmail,
+                                    recipientName,
+                                    creatorName,
+                                    grossValue,
+                                    dueDate,
+                                    newInvoiceId,
+                                    `https://integrandoser.com.br/${recipientType}/financeiro`
+                                );
+                            } catch (emailError) {
+                                console.error(`AVISO: Fatura ${newInvoiceId} criada (status concluído), mas e-mail falhou:`, emailError);
+                                // NÃO retorna erro 500
+                            }
                         }
                     }
                 }
@@ -1010,24 +1015,30 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
 
         // Se for pacote, notifica sobre a fatura
         if (is_package && recipientUserId) {
-            await createNotification(
-                req,
-                recipientUserId,
-                'new_invoice',
-                `Nova cobrança de pacote (${professionalName}) no valor de ${total_value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`,
-                `/${recipientType}/financeiro`
-            );
-
-            if (recipientEmail) {
-                await sendInvoiceNotificationEmail(
-                    recipientEmail,
-                    recipientName,
-                    professionalName,
-                    total_value,
-                    new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Due date
-                    newPackageInvoiceId,
-                    `https://integrandoser.com.br/${recipientType}/financeiro`
+            try { // Bloco try/catch para notificação + e-mail
+                await createNotification(
+                    req,
+                    recipientUserId,
+                    'new_invoice',
+                    `Nova cobrança de pacote (${professionalName}) no valor de ${total_value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`,
+                    `/${recipientType}/financeiro`
                 );
+
+                if (recipientEmail) {
+                    await sendInvoiceNotificationEmail(
+                        recipientEmail,
+                        recipientName,
+                        professionalName,
+                        total_value,
+                        new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Due date
+                        newPackageInvoiceId,
+                        `https://integrandoser.com.br/${recipientType}/financeiro`
+                    );
+                }
+            } catch (emailOrNotificationError) {
+                console.error(`AVISO: Pacote ${newPackageInvoiceId} criado, mas notificação/email falhou:`, emailOrNotificationError);
+                // NÃO retorna erro 500 aqui, apenas loga o aviso,
+                // pois a criação do pacote no DB foi bem-sucedida.
             }
         }
 
