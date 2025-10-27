@@ -130,11 +130,6 @@ router.get('/all-appointments', protect, isAdmin, async (req, res) => {
                 pat.id as patient_id, pat.nome as patient_name, pat.imagem_url as patient_photo,
                 comp.nome_empresa as company_name,
                 CASE
-                    /* Lembrar apenas se:
-                     * 1. Status for 'Agendada'
-                     * 2. O horário já passou (ajustado para UTC-3)
-                     * 3. NÃO for parte de um pacote (package_invoice_id IS NULL)
-                     */
                     WHEN 
                         a.status = 'Agendada' 
                         AND a.appointment_time < (NOW() - INTERVAL 3 HOUR - INTERVAL 30 MINUTE)
@@ -674,11 +669,6 @@ router.get('/my-appointments/professional', protect, async (req, res) => {
                 a.session_value, a.package_invoice_id,
                 p.id as patient_id, p.user_id as patient_user_id, p.nome AS patient_name, p.imagem_url as patient_photo,
                 CASE
-                    /* Lembrar apenas se:
-                     * 1. Status for 'Agendada'
-                     * 2. O horário já passou (ajustado para UTC-3)
-                     * 3. NÃO for parte de um pacote (package_invoice_id IS NULL)
-                     */
                     WHEN 
                         a.status = 'Agendada' 
                         AND a.appointment_time < (NOW() - INTERVAL 3 HOUR - INTERVAL 30 MINUTE)
