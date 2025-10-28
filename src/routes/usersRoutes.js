@@ -252,7 +252,7 @@ router.post('/', protect, isAdmin, upload.single('imagem_perfil'), async (req, r
     }
 
     if (req.file) {
-        profileData.imagem_url = req.file.path.replace(/\\/g, "/");
+        profileData.imagem_url = req.file.path;
     }
 
     if (profileData.data_nascimento && typeof profileData.data_nascimento === 'string') {
@@ -357,7 +357,7 @@ router.put('/:id', protect, isAdmin, upload.single('imagem_perfil'), async (req,
 
     // Adiciona a URL da imagem se um novo arquivo foi enviado
     if (req.file) {
-        profileData.imagem_url = req.file.path.replace(/\\/g, "/");
+        profileData.imagem_url = req.file.path;
     }
 
     // Verifica se a data de nascimento é uma string válida antes de processar.

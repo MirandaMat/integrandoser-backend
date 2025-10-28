@@ -223,7 +223,7 @@ router.post('/', protect, upload.array('attachments'), async (req, res) => {
         // Salva anexos, se houver
         if (req.files && req.files.length > 0) {
             for (const file of req.files) {
-                const file_url = file.path.replace(/\\/g, "/");
+                const file_url = file.path;
                 const file_type = file.mimetype;
                 await conn.query(
                     'INSERT INTO message_attachments (message_id, file_url, file_type) VALUES (?, ?, ?)',

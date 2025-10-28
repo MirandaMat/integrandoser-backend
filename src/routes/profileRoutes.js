@@ -68,7 +68,7 @@ router.put('/me', protect, upload.single('imagem_perfil'), async (req, res) => {
 
         // 2. Adiciona a URL da imagem se um novo arquivo foi enviado
         if (req.file) {
-            profileData.imagem_url = req.file.path.replace(/\\/g, "/");
+            profileData.imagem_url = req.file.path;
         }
 
         // 3. Formata a data de nascimento para o formato do banco
