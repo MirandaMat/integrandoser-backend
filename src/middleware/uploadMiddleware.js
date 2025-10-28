@@ -2,10 +2,10 @@
 const multer = require('multer');
 const MulterGoogleStorage = require('multer-google-storage');
 const path = require('path');
+// --- NOVA IMPORTAÇÃO ---
+const { Storage } = require('@google-cloud/storage'); // Importa a biblioteca oficial
 
-// ===================================================================
-// --- DEBUG LOGS (ANTES DA FORMATAÇÃO) ---
-// ===================================================================
+// --- DEBUG LOGS (Pode remover os anteriores se quiser, ou manter) ---
 console.log("--- DEBUG GCS Credentials (ANTES) ---");
 console.log("process.env.GCS_PROJECT_ID:", process.env.GCS_PROJECT_ID ? typeof process.env.GCS_PROJECT_ID : 'UNDEFINED');
 console.log("process.env.GCS_CLIENT_EMAIL:", process.env.GCS_CLIENT_EMAIL ? typeof process.env.GCS_CLIENT_EMAIL : 'UNDEFINED');
@@ -13,13 +13,10 @@ console.log("process.env.GCS_PRIVATE_KEY:", process.env.GCS_PRIVATE_KEY ? 'DEFIN
 console.log("process.env.GCS_BUCKET_NAME:", process.env.GCS_BUCKET_NAME ? typeof process.env.GCS_BUCKET_NAME : 'UNDEFINED');
 // ===================================================================
 
-// É CRUCIAL formatar a chave privada...
-const rawPrivateKey = process.env.GCS_PRIVATE_KEY || ''; // Pega a chave crua
-const privateKey = rawPrivateKey.replace(/\\n/g, '\n'); // Formata
+const rawPrivateKey = process.env.GCS_PRIVATE_KEY || '';
+const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
 
-// ===================================================================
-// --- DEBUG LOGS (DEPOIS DA FORMATAÇÃO) ---
-// ===================================================================
+// --- DEBUG LOGS (DEPOIS DA FORMATAÇÃO - Adicionar verificação de comprimento e fim) ---
 console.log("--- DEBUG GCS Credentials (DEPOIS format) ---");
 const projectIdValue = process.env.GCS_PROJECT_ID;
 const clientEmailValue = process.env.GCS_CLIENT_EMAIL;
@@ -27,10 +24,10 @@ const bucketNameValue = process.env.GCS_BUCKET_NAME;
 
 console.log("projectIdValue:", projectIdValue ? typeof projectIdValue : 'UNDEFINED');
 console.log("clientEmailValue:", clientEmailValue ? typeof clientEmailValue : 'UNDEFINED');
-console.log("privateKey (formatada):", privateKey ? 'DEFINIDO (parcial): ' + privateKey.substring(0, 30) + "..." : '*** VAZIA/UNDEFINED ***');
+console.log("privateKey (formatada):", privateKey ? `DEFINIDO (len: ${privateKey.length}, ends: ...${privateKey.slice(-30)})` : '*** VAZIA/UNDEFINED ***'); // Log de comprimento e fim
 console.log("bucketNameValue:", bucketNameValue ? typeof bucketNameValue : 'UNDEFINED');
 
-// Verifica explicitamente se são strings não vazias antes de chamar storageEngine
+// Verifica explicitamente se são strings não vazias antes de instanciar
 if (!projectIdValue || typeof projectIdValue !== 'string' ||
     !clientEmailValue || typeof clientEmailValue !== 'string' ||
     !privateKey || typeof privateKey !== 'string' || privateKey.length < 50 || // Chave privada deve ser longa
@@ -39,30 +36,45 @@ if (!projectIdValue || typeof projectIdValue !== 'string' ||
      console.error("!!! ERRO CRÍTICO: UMA OU MAIS CREDENCIAIS GCS ESTÃO INVÁLIDAS OU AUSENTES !!!");
      console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
      // Força um erro mais claro ANTES de chamar a biblioteca
-     throw new Error("Credenciais GCS ausentes ou inválidas detectadas ANTES de chamar storageEngine.");
+     throw new Error("Credenciais GCS ausentes ou inválidas detectadas ANTES de instanciar Storage.");
 }
-console.log("--- Todas as credenciais parecem válidas. Chamando storageEngine... ---");
+console.log("--- Todas as credenciais parecem válidas. Instanciando @google-cloud/storage... ---");
 // ===================================================================
+
+// --- NOVA ABORDAGEM: INSTANCIAÇÃO MANUAL ---
+let gcsStorageClient;
+try {
+    gcsStorageClient = new Storage({
+        projectId: projectIdValue,
+        credentials: {
+            client_email: clientEmailValue,
+            private_key: privateKey,
+        },
+    });
+    console.log("--- Instância de @google-cloud/storage criada com SUCESSO. ---");
+} catch (storageError) {
+    console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    console.error("!!! ERRO CRÍTICO AO INSTANCIAR @google-cloud/storage !!!", storageError);
+    console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    throw storageError; // Re-lança o erro para travar o deploy
+}
+// --- FIM DA NOVA ABORDAGEM ---
 
 // Lista de tipos de arquivo permitidos (vinda do seu arquivo original)
 const allowedMimeTypes = [
     'image/jpeg', 'image/png', 'image/gif', 'image/webp',
     'video/mp4', 'video/webm', 'video/ogg',
-    'video/quicktime',
+    'video/quicktime', // Adicionado para .mov
     'application/pdf', 'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
 ];
 
-// 1. Configuração do storageEngine (com a correção do objeto 'credentials')
+// --- MODIFICADO: Passa o cliente GCS instanciado para multer-google-storage ---
+console.log("--- Chamando MulterGoogleStorage.storageEngine com cliente GCS manual... ---")
 const storage = MulterGoogleStorage.storageEngine({
-    projectId: projectIdValue, // Usa a variável local verificada
-    bucket: bucketNameValue,   // Usa a variável local verificada
-
-    credentials: {
-        client_email: clientEmailValue, // Usa a variável local verificada
-        private_key: privateKey         // Usa a variável local formatada e verificada
-    },
-
+    // NÃO precisa mais passar projectId ou credentials aqui diretamente
+    gcs : gcsStorageClient, // Passa a instância manual
+    bucket: bucketNameValue, // O nome do bucket ainda é necessário aqui
     acl: 'publicRead',
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -75,8 +87,8 @@ const storage = MulterGoogleStorage.storageEngine({
         cb(null, `${folder}/${originalName}-${uniqueSuffix}${extension}`);
     }
 });
-
-console.log("--- storageEngine chamado com sucesso. ---"); // Log se a chamada não travar
+console.log("--- storageEngine chamado com sucesso (usando cliente manual). ---");
+// --- FIM DA MODIFICAÇÃO ---
 
 // ===================================================================
 // --- INSTÂNCIA DO MULTER (Lógica 100% preservada) ---
@@ -91,6 +103,7 @@ const multerUpload = multer({
         if (allowedMimeTypes.includes(file.mimetype)) {
             cb(null, true);
         } else {
+            console.warn(`[Multer File Filter] Tipo de arquivo REJEITADO: ${file.mimetype} (Original: ${file.originalname})`); // Log extra
             cb(new multer.MulterError('LIMIT_UNEXPECTED_FILE', 'Formato de arquivo não suportado!'), false);
         }
     },
@@ -108,17 +121,21 @@ const multerUpload = multer({
 const uploader = (multerInstance) => (req, res, next) => {
     multerInstance(req, res, (err) => {
         if (err instanceof multer.MulterError) {
+            console.error('[Multer Error]', err); // Log mais detalhado
             if (err.code === 'LIMIT_FILE_SIZE') {
                 return res.status(400).json({ message: 'Arquivo muito grande. O limite é de 50MB.' });
             }
             if (err.code === 'LIMIT_UNEXPECTED_FILE') {
                 return res.status(400).json({ message: 'Formato de arquivo não suportado.' });
             }
+            // Outros erros do Multer (ex: LIMIT_FIELD_COUNT, etc.)
+            return res.status(400).json({ message: `Erro no upload: ${err.message}` });
         } else if (err) {
-            // Log do erro real do GCS no console do servidor
-            console.error("ERRO NO UPLOAD PARA O GCS:", err);
-            return res.status(500).json({ message: 'Ocorreu um erro no upload do arquivo.' });
+            // Erros que não são do Multer (ex: erro na conexão GCS durante o upload)
+            console.error("ERRO NÃO-MULTER NO UPLOAD PARA O GCS:", err);
+            return res.status(500).json({ message: 'Ocorreu um erro interno no servidor durante o upload do arquivo.' });
         }
+        // Se não houve erro, continua para a próxima função (sua rota)
         next();
     });
 };
