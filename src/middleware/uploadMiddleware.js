@@ -3,6 +3,13 @@ const multer = require('multer');
 const MulterGoogleStorage = require('multer-google-storage');
 const path = require('path');
 
+console.log("--- DEBUG GCS Credentials ---");
+console.log("GCS_PROJECT_ID:", process.env.GCS_PROJECT_ID ? 'Encontrado' : '*** NÃO ENCONTRADO ***');
+console.log("GCS_CLIENT_EMAIL:", process.env.GCS_CLIENT_EMAIL ? 'Encontrado' : '*** NÃO ENCONTRADO ***');
+console.log("GCS_PRIVATE_KEY:", process.env.GCS_PRIVATE_KEY ? 'Encontrado (parcial): ' + process.env.GCS_PRIVATE_KEY.substring(0, 30) + "..." : '*** NÃO ENCONTRADO ***');
+console.log("GCS_BUCKET_NAME:", process.env.GCS_BUCKET_NAME ? 'Encontrado' : '*** NÃO ENCONTRADO ***');
+// ===================================================================
+
 // ===================================================================
 // --- CONFIGURAÇÃO DO GOOGLE CLOUD STORAGE ---
 // ===================================================================
