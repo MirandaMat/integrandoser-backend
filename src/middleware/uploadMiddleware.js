@@ -3,13 +3,6 @@ const multer = require('multer');
 const MulterGoogleStorage = require('multer-google-storage');
 const path = require('path');
 
-console.log("--- DEBUG GCS Credentials ---");
-console.log("GCS_PROJECT_ID:", process.env.GCS_PROJECT_ID ? 'Encontrado' : '*** NÃO ENCONTRADO ***');
-console.log("GCS_CLIENT_EMAIL:", process.env.GCS_CLIENT_EMAIL ? 'Encontrado' : '*** NÃO ENCONTRADO ***');
-console.log("GCS_PRIVATE_KEY:", process.env.GCS_PRIVATE_KEY ? 'Encontrado (parcial): ' + process.env.GCS_PRIVATE_KEY.substring(0, 30) + "..." : '*** NÃO ENCONTRADO ***');
-console.log("GCS_BUCKET_NAME:", process.env.GCS_BUCKET_NAME ? 'Encontrado' : '*** NÃO ENCONTRADO ***');
-// ===================================================================
-
 // ===================================================================
 // --- CONFIGURAÇÃO DO GOOGLE CLOUD STORAGE ---
 // ===================================================================
@@ -29,31 +22,35 @@ const allowedMimeTypes = [
 
 // 1. Substituímos multer.diskStorage pelo storageEngine do GCS
 const storage = MulterGoogleStorage.storageEngine({
-    // 2. Usamos as variáveis de ambiente com as credenciais do seu JSON
+    // ID do seu projeto Google Cloud
     projectId: process.env.GCS_PROJECT_ID,
-    clientEmail: process.env.GCS_CLIENT_EMAIL,
-    privateKey: privateKey,
-    
-    // 3. O nome do seu bucket
+    // Nome do seu bucket no Google Cloud Storage
     bucket: process.env.GCS_BUCKET_NAME,
-    
-    // 4. Isso torna todos os arquivos enviados publicamente legíveis
-    // (Exatamente como você configurou no console do Google)
+
+    // Passa as credenciais dentro de um objeto 'credentials'
+    // usando os nomes esperados pela API (snake_case)
+    credentials: {
+        client_email: process.env.GCS_CLIENT_EMAIL,
+        private_key: privateKey // Usa a chave privada formatada
+    },
+
+    // Define que os arquivos enviados serão publicamente legíveis
     acl: 'publicRead',
-    
-    // 5. Lógica de nomenclatura do arquivo (adaptada do seu original)
+
+    // Define como os arquivos serão nomeados e organizados no bucket
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const extension = path.extname(file.originalname);
+        // Remove espaços e a extensão do nome original
         const originalName = path.basename(file.originalname.replace(/\s/g, '_'), extension);
 
-        // Organiza os arquivos em pastas dentro do bucket
+        // Organiza em pastas com base no tipo de arquivo
         let folder = 'outros';
         if (file.mimetype.startsWith('image/')) folder = 'imagens';
         if (file.mimetype.startsWith('video/')) folder = 'videos';
         if (file.mimetype === 'application/pdf') folder = 'documentos';
-        
-        // A URL final será algo como: /imagens/meu_arquivo-123456.png
+
+        // Monta o nome final do arquivo no bucket (ex: 'imagens/nome_original-12345.jpg')
         cb(null, `${folder}/${originalName}-${uniqueSuffix}${extension}`);
     }
 });
