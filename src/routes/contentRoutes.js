@@ -73,8 +73,8 @@ router.get('/blog', async (req, res) => {
 
 router.post('/blog', protect, isAdmin, upload.fields([{ name: 'image', maxCount: 1 }, { name: 'video', maxCount: 1 }]), async (req, res) => {
     const { title, excerpt, category, paragraphs } = req.body;
-    const imageUrl = req.files.image ? req.files.image[0].path.replace(/\\/g, "/") : null;
-    const videoUrl = req.files.video ? req.files.video[0].path.replace(/\\/g, "/") : null;
+    const imageUrl = req.files.image ? req.files.image[0].path : null;
+    const videoUrl = req.files.video ? req.files.video[0].path : null;
     const post_date = new Date().toISOString().slice(0, 10);
 
     let conn;
@@ -108,8 +108,8 @@ router.put('/blog/:id', protect, isAdmin, upload.fields([{ name: 'image', maxCou
         }
         const post = posts[0];
 
-        const imageUrl = (req.files && req.files.image) ? req.files.image[0].path.replace(/\\/g, "/") : post.image_url;
-        const videoUrl = (req.files && req.files.video) ? req.files.video[0].path.replace(/\\/g, "/") : post.video_url;
+        const imageUrl = (req.files && req.files.image) ? req.files.image[0].path : post.image_url;
+        const videoUrl = (req.files && req.files.video) ? req.files.video[0].path : post.video_url;
 
         // Garante que a data esteja no formato AAAA-MM-DD
         const formattedDate = new Date(post_date).toISOString().slice(0, 10);
@@ -174,8 +174,8 @@ router.get('/testimonials', async (req, res) => {
 
 router.post('/testimonials', protect, isAdmin, upload.fields([{ name: 'photo', maxCount: 1 }, { name: 'video', maxCount: 1 }]), async (req, res) => {
     const { quote, name, role } = req.body;
-    const photoUrl = req.files.photo ? req.files.photo[0].path.replace(/\\/g, "/") : null;
-    const videoUrl = req.files.video ? req.files.video[0].path.replace(/\\/g, "/") : null;
+    const photoUrl = req.files.photo ? req.files.photo[0].path : null;
+    const videoUrl = req.files.video ? req.files.video[0].path : null;
 
     let conn;
     try {
@@ -213,8 +213,8 @@ router.put('/testimonials/:id', protect, isAdmin, upload.fields([{ name: 'photo'
     try {
         conn = await pool.getConnection();
         const [testimonial] = await conn.query("SELECT photo_url, video_url FROM testimonials WHERE id = ?", [id]);
-        const photoUrl = req.files.photo ? req.files.photo[0].path.replace(/\\/g, "/") : testimonial.photo_url;
-        const videoUrl = req.files.video ? req.files.video[0].path.replace(/\\/g, "/") : testimonial.video_url;
+        const photoUrl = req.files.photo ? req.files.photo[0].path : testimonial.photo_url;
+        const videoUrl = req.files.video ? req.files.video[0].path : testimonial.video_url;
         await conn.query(
             "UPDATE testimonials SET quote = ?, name = ?, role = ?, photo_url = ?, video_url = ? WHERE id = ?",
             [quote, name, role, photoUrl, videoUrl, id]
@@ -265,7 +265,7 @@ router.post('/services', protect, isAdmin, upload.single('image'), async (req, r
     let { title, slug, description, details } = req.body;
     slug = slug ? slug.trim() : slug;
 
-    const imageUrl = req.file ? req.file.path.replace(/\\/g, "/") : null;
+    const imageUrl = req.file ? req.file.path : null;
 
     if (!title || !slug) {
         return res.status(400).json({ message: 'Título e Slug são campos obrigatórios.' });
@@ -316,7 +316,7 @@ router.put('/services/:id', protect, isAdmin, upload.single('image'), async (req
         }
         const service = services[0];
         
-        const imageUrl = req.file ? req.file.path.replace(/\\/g, "/") : service.image_url;
+        const imageUrl = req.file ? req.file.path : service.image_url;
         await conn.query(
             "UPDATE services SET title = ?, slug = ?, description = ?, details = ?, image_url = ? WHERE id = ?",
             [title, slug, description, details, imageUrl, id] // O slug já vai corrigido para o DB
@@ -419,7 +419,7 @@ router.put('/tpt', protect, isAdmin, upload.single('about_image'), async (req, r
 
         // 3. Atualiza a URL da imagem se um novo arquivo foi enviado
         if (req.file) {
-            updateObject.about_image_url = req.file.path.replace(/\\/g, "/");
+            updateObject.about_image_url = req.file.path;
         }
         
         // 4. Constrói a query de UPDATE dinamicamente
@@ -572,31 +572,31 @@ router.put('/site', protect, isAdmin, upload.fields([
             // Home Section Files
             if (updatedSectionKey === 'home' && req.files.hero_video) {
                 // ATRIBUIÇÃO CORRETA:
-                dataToMerge.hero_video_url = req.files.hero_video[0].path.replace(/\\/g, "/"); //
+                dataToMerge.hero_video_url = req.files.hero_video[0].path; //
                 console.log(`[PUT /site] Merged hero_video_url: ${dataToMerge.hero_video_url}`);
             }
             if (updatedSectionKey === 'home' && req.files.tpt_media) {
                 const file = req.files.tpt_media[0];
                 // ATRIBUIÇÃO CORRETA:
-                dataToMerge.tpt_media_url = file.path.replace(/\\/g, "/"); //
+                dataToMerge.tpt_media_url = file.path; //
                 dataToMerge.tpt_media_type = file.mimetype.startsWith('video') ? 'video' : 'image'; //
                 console.log(`[PUT /site] Merged tpt_media_url: ${dataToMerge.tpt_media_url}, type: ${dataToMerge.tpt_media_type}`);
             }
             // About Section Files
             if (updatedSectionKey === 'about' && req.files.about_logo) {
-                dataToMerge.logo_url = req.files.about_logo[0].path.replace(/\\/g, "/"); // Sobrescreve/adiciona
+                dataToMerge.logo_url = req.files.about_logo[0].path; // Sobrescreve/adiciona
                 console.log(`[PUT /site] Merged about logo_url: ${dataToMerge.logo_url}`);
             }
             if (updatedSectionKey === 'about' && req.files.partner_logos) {
                 // Pega os logos existentes (que vieram do JSON parseado) e adiciona os novos
                 const existingLogos = Array.isArray(dataToMerge.partner_logos) ? dataToMerge.partner_logos : [];
-                const newLogoUrls = req.files.partner_logos.map(file => file.path.replace(/\\/g, "/")); // Obtém novos paths
+                const newLogoUrls = req.files.partner_logos.map(file => file.path); // Obtém novos paths
                 dataToMerge.partner_logos = [...existingLogos, ...newLogoUrls]; // Combina
                 console.log(`[PUT /site] Merged ${newLogoUrls.length} new partner logo URLs. Total now: ${dataToMerge.partner_logos.length}`);
             }
             // Founder Section File
             if (updatedSectionKey === 'founder' && req.files.founder_image) {
-                dataToMerge.image_url = req.files.founder_image[0].path.replace(/\\/g, "/"); // Sobrescreve/adiciona
+                dataToMerge.image_url = req.files.founder_image[0].path; // Sobrescreve/adiciona
                 console.log(`[PUT /site] Merged founder image_url: ${dataToMerge.image_url}`);
             }
         } else {

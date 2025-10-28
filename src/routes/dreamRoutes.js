@@ -28,7 +28,7 @@ router.get('/my-dreams', protect, isPaciente, async (req, res) => {
 router.post('/', protect, isPaciente, upload.single('dream_image'), async (req, res) => {
     const { title, content } = req.body;
     const { userId } = req.user;
-    const imageUrl = req.file ? req.file.path.replace(/\\/g, "/") : null;
+    const imageUrl = req.file ? req.file.path : null;
     let conn;
     try {
         conn = await pool.getConnection();
@@ -69,7 +69,7 @@ router.put('/:entryId', protect, isPaciente, upload.single('dream_image'), async
         if (diffDays > 15) return res.status(403).json({ message: 'Não é possível editar registros com mais de 15 dias.' });
 
         let imageUrl = dream.image_url;
-        if (req.file) imageUrl = req.file.path.replace(/\\/g, "/");
+        if (req.file) imageUrl = req.file.path;
 
         await conn.query("UPDATE dream_diary_entries SET title = ?, content = ?, image_url = ? WHERE id = ?", [title, content, imageUrl, entryId]);
         const [updatedDream] = await conn.query("SELECT * FROM dream_diary_entries WHERE id = ?", [entryId]);
