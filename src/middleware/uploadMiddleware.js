@@ -2,9 +2,9 @@
 const multer = require('multer');
 const MulterGoogleStorage = require('multer-google-storage');
 const path = require('path');
-const { Storage } = require('@google-cloud/storage'); // Importa a biblioteca oficial
+// REMOVIDO: const { Storage } = require('@google-cloud/storage');
 
-// --- Opcional: Manter ou remover os logs de depuração ---
+// Manter os logs para ter certeza
 console.log("--- DEBUG GCS Credentials (ANTES) ---");
 console.log("process.env.GCS_PROJECT_ID:", process.env.GCS_PROJECT_ID ? typeof process.env.GCS_PROJECT_ID : 'UNDEFINED');
 console.log("process.env.GCS_CLIENT_EMAIL:", process.env.GCS_CLIENT_EMAIL ? typeof process.env.GCS_CLIENT_EMAIL : 'UNDEFINED');
@@ -15,7 +15,7 @@ console.log("process.env.GCS_BUCKET_NAME:", process.env.GCS_BUCKET_NAME ? typeof
 const rawPrivateKey = process.env.GCS_PRIVATE_KEY || '';
 const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
 
-// --- Opcional: Manter ou remover os logs de depuração ---
+// Manter os logs para ter certeza
 console.log("--- DEBUG GCS Credentials (DEPOIS format) ---");
 const projectIdValue = process.env.GCS_PROJECT_ID;
 const clientEmailValue = process.env.GCS_CLIENT_EMAIL;
@@ -26,7 +26,7 @@ console.log("clientEmailValue:", clientEmailValue ? typeof clientEmailValue : 'U
 console.log("privateKey (formatada):", privateKey ? `DEFINIDO (len: ${privateKey.length}, ends: ...${privateKey.slice(-30)})` : '*** VAZIA/UNDEFINED ***');
 console.log("bucketNameValue:", bucketNameValue ? typeof bucketNameValue : 'UNDEFINED');
 
-// Verifica explicitamente se são strings não vazias antes de instanciar
+// Manter a verificação
 if (!projectIdValue || typeof projectIdValue !== 'string' ||
     !clientEmailValue || typeof clientEmailValue !== 'string' ||
     !privateKey || typeof privateKey !== 'string' || privateKey.length < 50 ||
@@ -34,29 +34,10 @@ if (!projectIdValue || typeof projectIdValue !== 'string' ||
      console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
      console.error("!!! ERRO CRÍTICO: UMA OU MAIS CREDENCIAIS GCS ESTÃO INVÁLIDAS OU AUSENTES !!!");
      console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-     throw new Error("Credenciais GCS ausentes ou inválidas detectadas ANTES de instanciar Storage.");
+     throw new Error("Credenciais GCS ausentes ou inválidas detectadas ANTES de chamar storageEngine.");
 }
-console.log("--- Todas as credenciais parecem válidas. Instanciando @google-cloud/storage... ---");
+console.log("--- Todas as credenciais parecem válidas. Chamando storageEngine (sem cliente manual)... ---");
 // ===================================================================
-
-// --- INSTANCIAÇÃO MANUAL DO CLIENTE GCS ---
-let gcsStorageClient;
-try {
-    gcsStorageClient = new Storage({
-        projectId: projectIdValue,
-        credentials: {
-            client_email: clientEmailValue,
-            private_key: privateKey,
-        },
-    });
-    console.log("--- Instância de @google-cloud/storage criada com SUCESSO. ---");
-} catch (storageError) {
-    console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-    console.error("!!! ERRO CRÍTICO AO INSTANCIAR @google-cloud/storage !!!", storageError);
-    console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-    throw storageError;
-}
-// --- FIM DA INSTANCIAÇÃO MANUAL ---
 
 // Lista de tipos de arquivo permitidos
 const allowedMimeTypes = [
@@ -67,14 +48,16 @@ const allowedMimeTypes = [
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ];
 
-// --- CONFIGURAÇÃO FINAL do storageEngine ---
-console.log("--- Chamando MulterGoogleStorage.storageEngine com cliente GCS manual E projectId redundante... ---")
+// --- Voltando à configuração com projectId e credentials aninhados ---
 const storage = MulterGoogleStorage.storageEngine({
-    // Mesmo passando 'gcs', adicionamos 'projectId' de volta para satisfazer a verificação da lib
-    projectId: projectIdValue,   // <--- ADICIONADO DE VOLTA
+    projectId: projectIdValue,
+    bucket: bucketNameValue,
 
-    gcs : gcsStorageClient,    // Passa a instância manual
-    bucket: bucketNameValue,    // O nome do bucket ainda é necessário aqui
+    credentials: {
+        client_email: clientEmailValue,
+        private_key: privateKey
+    },
+
     acl: 'publicRead',
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -87,8 +70,8 @@ const storage = MulterGoogleStorage.storageEngine({
         cb(null, `${folder}/${originalName}-${uniqueSuffix}${extension}`);
     }
 });
-console.log("--- storageEngine chamado com sucesso (usando cliente manual E projectId redundante). ---");
-// --- FIM DA CONFIGURAÇÃO FINAL ---
+console.log("--- storageEngine chamado com sucesso (sem cliente manual). ---");
+// --- FIM DA ALTERAÇÃO ---
 
 // --- INSTÂNCIA DO MULTER ---
 const multerUpload = multer({
