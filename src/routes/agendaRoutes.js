@@ -975,7 +975,7 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
 });
 */
 
-
+// Rota para o PROFISSIONAL atualizar o status de um agendamento (COM FATURAMENTO AUTOMÁTICO)
 router.patch('/appointments/:id/status', protect, isProfissional, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
@@ -988,27 +988,29 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
     }
 
     let conn;
-    // Variáveis para guardar dados necessários para notificações/e-mails PÓS-commit
+    // Variáveis para guardar dados necessários para notificações/e-mails PÓS-commit e PÓS-resposta
     let newInvoiceId = null;
     let recipientUserId = null;
     let recipientName = '';
     let recipientEmail = '';
     let recipientType = '';
-    let grossValueForEmail = 0; // Guardar valor para e-mail
-    let appointmentDetailsForEmail = null; // Guardar detalhes para e-mail e notificação
-    let dueDateForEmail = null; // Guardar data de vencimento
+    let grossValueForEmail = 0;
+    let appointmentDetailsForEmail = null;
+    let dueDateForEmail = null;
+    let creatorNameForEmail = 'seu profissional'; // Nome padrão
 
     try {
         conn = await pool.getConnection();
         await conn.beginTransaction(); // Inicia a transação
 
-        // Verifica se o usuário logado é um profissional válido
-        const [profProfile] = await conn.query('SELECT id FROM professionals WHERE user_id = ?', [userId]);
+        // Verifica se o usuário logado é um profissional válido e obtém o nome
+        const [profProfile] = await conn.query('SELECT id, nome FROM professionals WHERE user_id = ?', [userId]);
         if (!profProfile || profProfile.length === 0) {
             await conn.rollback();
             return res.status(403).json({ message: 'Perfil profissional não encontrado.' });
         }
         const professionalId = profProfile.id;
+        creatorNameForEmail = profProfile.nome; // Guarda o nome para usar depois
 
         // Busca o agendamento, seu status atual e se pertence a um pacote
         const [app] = await conn.query('SELECT professional_id, status as current_status, package_invoice_id FROM appointments WHERE id = ? FOR UPDATE', [id]); // FOR UPDATE para lock
@@ -1025,12 +1027,11 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
             return res.status(403).json({ message: 'Esta consulta aguarda o pagamento do pacote. Você só pode cancelá-la.' });
         }
 
-        // Atualiza o status do agendamento
+        // --- ATUALIZAÇÃO PRINCIPAL DO STATUS ---
         await conn.query('UPDATE appointments SET status = ? WHERE id = ?', [status, id]);
 
-        // Lógica de Faturamento para status 'Concluída' (se não for de pacote)
+        // --- LÓGICA DE FATURAMENTO (se 'Concluída' e não for de pacote) ---
         if (status === 'Concluída' && !app.package_invoice_id) {
-            // Busca detalhes APENAS se precisar faturar
             const [appointmentDetails] = await conn.query(
                 "SELECT professional_id, patient_id, session_value, appointment_time FROM appointments WHERE id = ?",
                 [id]
@@ -1038,7 +1039,7 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
             appointmentDetailsForEmail = appointmentDetails; // Guarda para usar depois do commit
 
             if (appointmentDetails && appointmentDetails.session_value > 0) {
-                grossValueForEmail = parseFloat(appointmentDetails.session_value); // Guarda para email
+                grossValueForEmail = parseFloat(appointmentDetails.session_value);
                 const commissionValue = grossValueForEmail * 0.25;
 
                 // 1. Cria registro interno para comissão
@@ -1051,35 +1052,23 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
                 const [patientDetails] = await conn.query("SELECT user_id, company_id, nome FROM patients WHERE id = ?", [appointmentDetails.patient_id]);
 
                 if (patientDetails) {
-                    // Lógica para determinar recipientUserId, recipientName, recipientEmail, recipientType (empresa ou paciente)
+                    // Lógica para determinar recipientUserId, recipientName, recipientEmail, recipientType
                     if (patientDetails.company_id) {
-                        // ==========================================================
-                        // --- CORREÇÃO (SQL real no lugar do comentário) ---
                         const [companyDetails] = await conn.query(
                             "SELECT u.id as user_id, c.nome_empresa as name, u.email FROM companies c JOIN users u ON c.user_id = u.id WHERE c.id = ?",
                             [patientDetails.company_id]
                         );
-                        // ==========================================================
-                        if (companyDetails) { 
-                             recipientUserId = companyDetails.user_id;
-                             recipientName = companyDetails.name;
-                             recipientEmail = companyDetails.email;
-                             recipientType = 'empresa';
+                        if (companyDetails) {
+                            recipientUserId = companyDetails.user_id; recipientName = companyDetails.name; recipientEmail = companyDetails.email; recipientType = 'empresa';
                         }
                     }
                     if (!recipientUserId) { // Cobra o paciente
-                        // ==========================================================
-                        // --- CORREÇÃO (SQL real no lugar do comentário) ---
                         const [userPatientDetails] = await conn.query(
                             "SELECT u.id as user_id, p.nome as name, u.email FROM patients p JOIN users u ON p.user_id = u.id WHERE p.id = ?",
                             [appointmentDetails.patient_id]
                         );
-                        // ==========================================================
-                        if (userPatientDetails) { 
-                             recipientUserId = userPatientDetails.user_id;
-                             recipientName = userPatientDetails.name;
-                             recipientEmail = userPatientDetails.email;
-                             recipientType = 'paciente';
+                        if (userPatientDetails) {
+                            recipientUserId = userPatientDetails.user_id; recipientName = userPatientDetails.name; recipientEmail = userPatientDetails.email; recipientType = 'paciente';
                         }
                     }
 
@@ -1088,57 +1077,59 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
                         const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + 15);
                         dueDateForEmail = dueDate; // Guarda para e-mail
                         const description = `Referente à sessão com ${patientDetails.nome} em ${new Date(appointmentDetails.appointment_time).toLocaleDateString('pt-BR')}.`;
-                        
+
                         const invoiceResult = await conn.query(
                             'INSERT INTO invoices (user_id, creator_user_id, amount, due_date, description, status) VALUES (?, ?, ?, ?, ?, ?)',
                             [recipientUserId, userId, grossValueForEmail, dueDate, description, 'pending']
                         );
-                        newInvoiceId = invoiceResult.insertId; // Guarda ID para notificação/email PÓS-commit
+                        // Verificar se insertId existe antes de atribuir
+                        newInvoiceId = (invoiceResult && invoiceResult[0]) ? invoiceResult[0].insertId : (invoiceResult ? invoiceResult.insertId : null);
+                        if (!newInvoiceId) {
+                            console.error("ERRO: Não foi possível obter o ID da nova fatura após inserção.");
+                            // Lançar um erro aqui pode ser apropriado se a fatura for crítica
+                            // throw new Error("Falha ao obter ID da fatura.");
+                        }
                     }
                 }
             }
-        } else {
-             // Se não for 'Concluída' ou for de pacote, busca detalhes só para notificação de status
-             const [appointmentDetails] = await conn.query( "SELECT professional_id, patient_id, session_value, appointment_time FROM appointments WHERE id = ?", [id] );
+        } else if (!appointmentDetailsForEmail) { // Se não buscou detalhes no bloco 'Concluída'
+             // Busca detalhes básicos APENAS para notificação de status (se não for 'Concluída')
+             const [appointmentDetails] = await conn.query( "SELECT professional_id, patient_id, appointment_time FROM appointments WHERE id = ?", [id] );
              appointmentDetailsForEmail = appointmentDetails;
         }
 
         // <<< COMMIT AQUI >>>
         await conn.commit();
 
-        // --- TENTATIVA DE ENVIO DE NOTIFICAÇÕES E E-MAILS (APÓS COMMIT) ---
+        // --- ENVIA A RESPOSTA DE SUCESSO IMEDIATAMENTE APÓS O COMMIT ---
+        res.json({ message: 'Status atualizado com sucesso!' + (newInvoiceId ? ' Fatura gerada.' : '') });
+        // O frontend receberá isso e fechará o modal / atualizará a lista.
 
-        // 1. Tenta enviar notificação e e-mail da FATURA (se foi criada nesta chamada)
-        if (newInvoiceId && recipientUserId) {
-            try {
-                // Tivemos que buscar o 'conn' de novo pois o 'pool' não está no escopo aqui
-                const [creatorProfile] = await pool.query("SELECT nome FROM professionals WHERE user_id = ?", [userId]); // Busca nome fora da TX
-                const creatorName = creatorProfile ? creatorProfile.nome : 'seu profissional';
-
+        // --- TENTATIVA DE ENVIO DE NOTIFICAÇÕES E E-MAILS (APÓS A RESPOSTA) ---
+        // Usamos um novo try...catch apenas para logar erros, sem afetar a resposta já enviada.
+        try {
+            // 1. Tenta enviar notificação e e-mail da FATURA (se foi criada nesta chamada)
+            if (newInvoiceId && recipientUserId) {
                 // Envia notificação via Socket.IO e salva no DB
                 await createNotification(
                     req, recipientUserId, 'new_invoice',
-                    `Nova cobrança de ${creatorName} no valor de ${grossValueForEmail.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`,
-                    `/${recipientType}/financeiro`
+                    `Nova cobrança de ${creatorNameForEmail} no valor de ${grossValueForEmail.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`,
+                    `/${recipientType}/financeiro` // Link dinâmico
                 );
 
                 // Tenta enviar e-mail
                 if (recipientEmail) {
                     await sendInvoiceNotificationEmail(
-                        recipientEmail, recipientName, creatorName, grossValueForEmail, dueDateForEmail, newInvoiceId,
-                        `https://integrandoser.com.br/${recipientType}/financeiro`
+                        recipientEmail, recipientName, creatorNameForEmail, grossValueForEmail, dueDateForEmail, newInvoiceId,
+                        `https://integrandoser.com.br/${recipientType}/financeiro` // Link dinâmico
                     );
                 }
-            } catch (invoiceEmailOrNotificationError) {
-                console.warn(`AVISO [Fatura ${newInvoiceId}]: Status da consulta ${id} atualizado e fatura criada, mas notificação/email para pagador falhou:`, invoiceEmailOrNotificationError);
             }
-        }
 
-        // 2. Tenta enviar notificações de ATUALIZAÇÃO DE STATUS (Socket + DB)
-        try {
+            // 2. Tenta enviar notificações de ATUALIZAÇÃO DE STATUS (Socket + DB)
             const io = req.app.get('io');
             if (io) {
-                 io.emit('appointmentStatusChanged');
+                 io.emit('appointmentStatusChanged'); // Notifica todos os clientes conectados
                  console.log(`[Socket Emit] Evento 'appointmentStatusChanged' emitido globalmente devido à atualização da consulta ${id}.`);
             } else {
                  console.warn(`AVISO [Consulta ${id}]: Instância do Socket.IO não encontrada. Não foi possível emitir 'appointmentStatusChanged'.`);
@@ -1146,7 +1137,7 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
 
             // Notifica especificamente o paciente via DB (e Socket se online)
             if (appointmentDetailsForEmail && appointmentDetailsForEmail.patient_id) { // Usa os detalhes guardados
-                // Tivemos que buscar o 'conn' de novo pois o 'pool' não está no escopo aqui
+                // Busca o user_id do paciente FORA da transação (ela já foi commitada)
                 const [patientUser] = await pool.query("SELECT user_id FROM patients WHERE id = ?", [appointmentDetailsForEmail.patient_id]);
                 if (patientUser && patientUser.user_id) {
                     const appointmentDate = new Date(appointmentDetailsForEmail.appointment_time).toLocaleDateString('pt-BR');
@@ -1157,17 +1148,21 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
                     );
                 }
             }
-        } catch (statusNotificationError) {
-            console.warn(`AVISO [Consulta ${id}]: Status atualizado para ${status}, mas notificação para paciente falhou:`, statusNotificationError);
+        } catch (postCommitError) { // Captura qualquer erro ocorrido APÓS o commit e o envio da resposta
+            // Apenas loga o erro no servidor, pois a operação principal foi bem-sucedida.
+            console.error(`ERRO PÓS-COMMIT [Consulta ${id}]: Falha no envio de notificação/email após sucesso no DB:`, postCommitError);
         }
-
-        // --- Resposta de Sucesso Final ---
-        res.json({ message: 'Status atualizado com sucesso!' + (newInvoiceId ? ' Fatura gerada.' : '') });
 
     } catch (error) { // Captura erros CRÍTICOS ocorridos ANTES do commit (DB, permissão)
         if (conn) await conn.rollback(); // Garante rollback se o erro foi antes do commit
         console.error(`Erro CRÍTICO ao atualizar status da consulta ${id} para ${status} (antes do commit):`, error);
-        res.status(500).json({ message: 'Erro crítico ao processar a solicitação no banco de dados.' });
+        // Garante que uma resposta de erro seja enviada APENAS se o commit falhar E a resposta ainda não foi enviada
+        if (!res.headersSent) {
+             res.status(500).json({ message: 'Erro crítico ao processar a solicitação no banco de dados.' });
+        } else {
+             // Loga um alerta se o erro ocorreu depois que a resposta já foi enviada (muito raro)
+             console.error(`[ALERTA] Erro DB detectado (antes do commit falhar?), mas a resposta de sucesso JÁ FOI ENVIADA para o cliente para a consulta ${id}.`);
+        }
     } finally {
         if (conn) conn.release(); // Libera a conexão com o banco
     }
