@@ -6,7 +6,7 @@ const { Resend } = require('resend'); // <--- Importado Resend
 const resend = new Resend(process.env.RESEND_API_KEY);
 // Use o email verificado configurado nas variáveis de ambiente
 //const fromEmail = process.env.EMAIL_FROM_ADDRESS;
-const fromEmail = "contato@integrandoser.com.br"; 
+const fromEmail = "onboarding@resend.dev"; 
 
 // Verificação inicial (opcional, mas bom para debug)
 if (!process.env.RESEND_API_KEY) {
@@ -39,7 +39,8 @@ const sendWelcomeEmail = async (to, tempPassword) => {
 
     try {
         const { data, error } = await resend.emails.send({
-            from: `IntegrandoSer <${fromEmail}>`, // Remetente verificado
+            //from: `IntegrandoSer <${fromEmail}>`, // Remetente verificado
+            from: `IntegrandoSer <${fromEmail}>`,
             to: [to], // Resend espera um array
             subject: subject,
             html: html,
@@ -78,6 +79,7 @@ const sendSchedulingEmail = async (to, name, scheduleLink) => {
     `;
     try {
         const { data, error } = await resend.emails.send({
+            //from: `IntegrandoSer <${fromEmail}>`,
             from: `IntegrandoSer <${fromEmail}>`,
             to: [to],
             subject: subject,
@@ -118,6 +120,7 @@ const sendConfirmationEmail = async (to, name, appointmentTime, meetingLink) => 
 
     try {
         const { data, error } = await resend.emails.send({
+            //from: `IntegrandoSer <${fromEmail}>`,
             from: `IntegrandoSer <${fromEmail}>`,
             to: [to],
             subject: subject,
