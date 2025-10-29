@@ -1,11 +1,10 @@
 // server/src/middleware/uploadMiddleware.js
 const multer = require('multer');
 const { storageEngine } = require('multer-google-storage');
-const { Storage } = require('@google-cloud/storage'); // <<< Importa a biblioteca oficial
+const { Storage } = require('@google-cloud/storage');
 const path = require('path');
 
 // --- 1. Verificação das Variáveis de Ambiente ---
-// (Mesma verificação de antes)
 if (!process.env.GCS_BUCKET_NAME || !process.env.GCS_PROJECT_ID || !process.env.GCS_CLIENT_EMAIL || !process.env.GCS_PRIVATE_KEY) {
     console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
     console.error('[GCS_CONFIG] Variáveis de ambiente do GCS não estão configuradas!');
@@ -40,8 +39,8 @@ try {
 // --- 3. Configuração do Multer-Google-Storage usando o Cliente Inicializado ---
 console.log('[GCS DEBUG] Tentando inicializar o storageEngine do Multer...');
 const gcsStorage = storageEngine({
-    // Em vez de projectId e credentials, passamos o cliente já pronto
-    storage: storageClient, // <<< Passa o cliente inicializado
+    storage: storageClient, // Passa o cliente inicializado
+    projectId: process.env.GCS_PROJECT_ID, // <<< MUDANÇA AQUI: Passa o projectId redundantemente
     bucket: process.env.GCS_BUCKET_NAME,
     filename: (req, file, cb) => {
         // Gera um nome de arquivo único
@@ -54,17 +53,15 @@ console.log('[GCS DEBUG] storageEngine do Multer inicializado.');
 
 
 // --- 4. Lista de Mime Types Permitidos ---
-// (Inalterado)
 const allowedMimeTypes = [
     'image/jpeg', 'image/png', 'image/gif', 'image/webp',
     'video/mp4', 'video/webm', 'video/ogg',
     'video/quicktime',
-    'application/pdf', 'application/msword', 
+    'application/pdf', 'application/msword',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ];
 
 // --- 5. Instância do Multer usando o GCS Storage ---
-// (Inalterado)
 const multerUpload = multer({
     storage: gcsStorage,
     fileFilter: (req, file, cb) => {
@@ -74,13 +71,12 @@ const multerUpload = multer({
             cb(new multer.MulterError('LIMIT_UNEXPECTED_FILE', 'Formato de arquivo não suportado!'), false);
         }
     },
-    limits: { 
+    limits: {
         fileSize: 1024 * 1024 * 50 // 50MB
     }
 });
 
-// --- 6. Função "Invólucro" para Erros (Inalterada) ---
-// (Inalterado)
+// --- 6. Função "Invólucro" para Erros ---
 const uploader = (multerInstance) => (req, res, next) => {
     multerInstance(req, res, (err) => {
         if (err instanceof multer.MulterError) {
@@ -91,15 +87,14 @@ const uploader = (multerInstance) => (req, res, next) => {
                 return res.status(400).json({ message: 'Formato de arquivo não suportado.' });
             }
         } else if (err) {
-            console.error('[MULTER_ERROR]', err); 
+            console.error('[MULTER_ERROR]', err);
             return res.status(500).json({ message: 'Ocorreu um erro no upload do arquivo.' });
         }
         next();
     });
 };
 
-// --- 7. Exportação dos Métodos (Inalterada) ---
-// (Inalterado)
+// --- 7. Exportação dos Métodos ---
 module.exports = {
     single: (fieldName) => uploader(multerUpload.single(fieldName)),
     array: (fieldName, maxCount) => uploader(multerUpload.array(fieldName, maxCount)),
