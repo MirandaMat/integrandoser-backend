@@ -31,15 +31,16 @@ const port = process.env.PORT || 3001;
 
 // Configuração do CORS
 const allowedOrigins = [
-    'http://localhost:5173',
-    'https://integrandoser.integrandoser.com.br',
+    'http://localhost:5173', // Para desenvolvimento local
+    'https://integrandoser.com.br', // <-- NOVO DOMÍNIO DE PRODUÇÃO ADICIONADO
+    'https://integrandoser.integrandoser.com.br', // Mantenha se ainda usar
     process.env.FRONTEND_URL // Adicione a URL do frontend do .env por segurança
 ];
 
 const corsOptions = {
     origin: function (origin, callback) {
         // Permitir requisições sem 'origin' (ex: Postman) ou de origens permitidas
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+        if (!origin || allowedOrigins.indexOf(origin) !== -1) { // A lógica aqui já funciona com a lista atualizada
             callback(null, true);
         } else {
             console.warn(`CORS: Origem REJEITADA: ${origin}`); // Log de depuração
