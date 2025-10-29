@@ -1,10 +1,11 @@
 // server/src/middleware/uploadMiddleware.js
 const multer = require('multer');
 const { storageEngine } = require('multer-google-storage');
+const { Storage } = require('@google-cloud/storage'); // <<< Importa a biblioteca oficial
 const path = require('path');
 
-// --- 1. Configuração do Google Cloud Storage ---
-// Verifique se as variáveis de ambiente essenciais existem
+// --- 1. Verificação das Variáveis de Ambiente ---
+// (Mesma verificação de antes)
 if (!process.env.GCS_BUCKET_NAME || !process.env.GCS_PROJECT_ID || !process.env.GCS_CLIENT_EMAIL || !process.env.GCS_PRIVATE_KEY) {
     console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
     console.error('[GCS_CONFIG] Variáveis de ambiente do GCS não estão configuradas!');
@@ -13,28 +14,35 @@ if (!process.env.GCS_BUCKET_NAME || !process.env.GCS_PROJECT_ID || !process.env.
     throw new Error('Variáveis de ambiente do Google Cloud Storage ausentes.');
 }
 
-// Formata a chave privada (variáveis de ambiente no Railway podem quebrar as linhas)
-// ADICIONADO .trim() para remover quebras de linha extras no início ou fim
-const gcsPrivateKey = process.env.GCS_PRIVATE_KEY.replace(/\\n/g, '\n').trim(); // <<< MUDANÇA AQUI
+// Formata a chave privada
+const gcsPrivateKey = process.env.GCS_PRIVATE_KEY.replace(/\\n/g, '\n').trim();
 
-// --- !!!!! DEBUGGING LOGS (Pode remover depois que funcionar) !!!!! ---
-console.log('--- [GCS DEBUG] VERIFICANDO VARIÁVEIS ---');
-console.log(`[GCS DEBUG] GCS_PROJECT_ID: ${process.env.GCS_PROJECT_ID}`);
-console.log(`[GCS DEBUG] GCS_CLIENT_EMAIL: ${process.env.GCS_CLIENT_EMAIL}`);
-console.log(`[GCS DEBUG] GCS_BUCKET_NAME: ${process.env.GCS_BUCKET_NAME}`);
-console.log(`[GCS DEBUG] gcsPrivateKey (Formatada, Inicia com '-----BEGIN...'): ${gcsPrivateKey.startsWith('-----BEGIN PRIVATE KEY-----')}`);
-console.log(`[GCS DEBUG] gcsPrivateKey (Formatada, Termina com '...END PRIVATE KEY-----'): ${gcsPrivateKey.endsWith('-----END PRIVATE KEY-----')}`);
-console.log('--- [GCS DEBUG] TENTANDO INICIAR storageEngine... ---');
-// --- !!!!! FIM DO DEBUGGING !!!!! ---
+// --- 2. Inicializa o Cliente Oficial do Google Cloud Storage ---
+let storageClient;
+try {
+    console.log('[GCS DEBUG] Tentando inicializar o cliente @google-cloud/storage...');
+    storageClient = new Storage({
+        projectId: process.env.GCS_PROJECT_ID,
+        credentials: {
+            client_email: process.env.GCS_CLIENT_EMAIL,
+            private_key: gcsPrivateKey,
+        }
+    });
+    console.log('[GCS DEBUG] Cliente @google-cloud/storage inicializado com sucesso.');
+} catch (error) {
+    console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+    console.error('[GCS_CONFIG] Erro ao inicializar o cliente @google-cloud/storage:', error);
+    console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+    throw new Error('Falha ao inicializar o cliente Google Cloud Storage.');
+}
 
 
+// --- 3. Configuração do Multer-Google-Storage usando o Cliente Inicializado ---
+console.log('[GCS DEBUG] Tentando inicializar o storageEngine do Multer...');
 const gcsStorage = storageEngine({
+    // Em vez de projectId e credentials, passamos o cliente já pronto
+    storage: storageClient, // <<< Passa o cliente inicializado
     bucket: process.env.GCS_BUCKET_NAME,
-    projectId: process.env.GCS_PROJECT_ID,
-    credentials: {
-        client_email: process.env.GCS_CLIENT_EMAIL,
-        private_key: gcsPrivateKey,
-    },
     filename: (req, file, cb) => {
         // Gera um nome de arquivo único
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -42,8 +50,11 @@ const gcsStorage = storageEngine({
         cb(null, `${file.fieldname}-${uniqueSuffix}${extension}`);
     }
 });
+console.log('[GCS DEBUG] storageEngine do Multer inicializado.');
 
-// --- 2. Lista de Mime Types Permitidos ---
+
+// --- 4. Lista de Mime Types Permitidos ---
+// (Inalterado)
 const allowedMimeTypes = [
     'image/jpeg', 'image/png', 'image/gif', 'image/webp',
     'video/mp4', 'video/webm', 'video/ogg',
@@ -52,7 +63,8 @@ const allowedMimeTypes = [
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ];
 
-// --- 3. Instância do Multer usando o GCS Storage ---
+// --- 5. Instância do Multer usando o GCS Storage ---
+// (Inalterado)
 const multerUpload = multer({
     storage: gcsStorage,
     fileFilter: (req, file, cb) => {
@@ -67,7 +79,8 @@ const multerUpload = multer({
     }
 });
 
-// --- 4. Função "Invólucro" para Erros (Inalterada) ---
+// --- 6. Função "Invólucro" para Erros (Inalterada) ---
+// (Inalterado)
 const uploader = (multerInstance) => (req, res, next) => {
     multerInstance(req, res, (err) => {
         if (err instanceof multer.MulterError) {
@@ -85,7 +98,8 @@ const uploader = (multerInstance) => (req, res, next) => {
     });
 };
 
-// --- 5. Exportação dos Métodos (Inalterada) ---
+// --- 7. Exportação dos Métodos (Inalterada) ---
+// (Inalterado)
 module.exports = {
     single: (fieldName) => uploader(multerUpload.single(fieldName)),
     array: (fieldName, maxCount) => uploader(multerUpload.array(fieldName, maxCount)),
