@@ -251,8 +251,11 @@ router.post('/', protect, isAdmin, upload.single('imagem_perfil'), async (req, r
         return res.status(400).json({ message: 'Dados insuficientes.' });
     }
 
-    if (req.file) {
-        profileData.imagem_url = req.file.path;
+    if (req.file && req.file.gcsUrl) { // <<< Verifica se gcsUrl existe
+        profileData.imagem_url = req.file.gcsUrl; // <<< Linha corrigida
+    } else if (req.file) {
+        console.warn(`[USER UPDATE] Arquivo ${req.file.originalname} recebido, mas URL GCS não encontrada.`);
+        // Decide se quer lançar um erro ou apenas ignorar a imagem na atualização
     }
 
     if (profileData.data_nascimento && typeof profileData.data_nascimento === 'string') {
@@ -356,8 +359,11 @@ router.put('/:id', protect, isAdmin, upload.single('imagem_perfil'), async (req,
     }
 
     // Adiciona a URL da imagem se um novo arquivo foi enviado
-    if (req.file) {
-        profileData.imagem_url = req.file.path;
+    if (req.file && req.file.gcsUrl) { // <<< Verifica se gcsUrl existe
+        profileData.imagem_url = req.file.gcsUrl; // <<< Linha corrigida
+    } else if (req.file) {
+        console.warn(`[USER CREATE] Arquivo ${req.file.originalname} recebido, mas URL GCS não encontrada.`);
+        // Decide se quer lançar um erro ou criar o usuário sem imagem
     }
 
     // Verifica se a data de nascimento é uma string válida antes de processar.

@@ -223,12 +223,17 @@ router.post('/', protect, upload.array('attachments'), async (req, res) => {
         // Salva anexos, se houver
         if (req.files && req.files.length > 0) {
             for (const file of req.files) {
-                const file_url = file.path;
-                const file_type = file.mimetype;
-                await conn.query(
-                    'INSERT INTO message_attachments (message_id, file_url, file_type) VALUES (?, ?, ?)',
-                    [newMessageId, file_url, file_type]
-                );
+                // Verifica se o upload para GCS deu certo antes de salvar no DB
+                if (file && file.gcsUrl) { // <<< Verifica gcsUrl
+                    const file_url = file.gcsUrl; // <<< Usa gcsUrl
+                    const file_type = file.mimetype;
+                    await conn.query(
+                        'INSERT INTO message_attachments (message_id, file_url, file_type) VALUES (?, ?, ?)',
+                        [newMessageId, file_url, file_type] // Salva gcsUrl
+                    );
+                } else {
+                    console.warn(`[MESSAGE SEND] Anexo ${file.originalname} recebido, mas URL GCS não encontrada. Anexo ignorado.`);
+                }
             }
         }
         

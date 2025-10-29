@@ -67,8 +67,12 @@ router.put('/me', protect, upload.single('imagem_perfil'), async (req, res) => {
         }
 
         // 2. Adiciona a URL da imagem se um novo arquivo foi enviado
-        if (req.file) {
-            profileData.imagem_url = req.file.path;
+        if (req.file && req.file.gcsUrl) { // <<< Verifica se gcsUrl existe
+            profileData.imagem_url = req.file.gcsUrl; // 
+        } else if (req.file) {
+             // Se req.file existe mas gcsUrl não, algo deu errado no upload GCS
+             console.warn(`[PROFILE UPDATE] Arquivo ${req.file.originalname} recebido, mas URL GCS não encontrada.`);
+             // Decide se quer lançar um erro ou apenas ignorar a imagem
         }
 
         // 3. Formata a data de nascimento para o formato do banco

@@ -73,8 +73,8 @@ router.get('/blog', async (req, res) => {
 
 router.post('/blog', protect, isAdmin, upload.fields([{ name: 'image', maxCount: 1 }, { name: 'video', maxCount: 1 }]), async (req, res) => {
     const { title, excerpt, category, paragraphs } = req.body;
-    const imageUrl = req.files.image ? req.files.image[0].path : null;
-    const videoUrl = req.files.video ? req.files.video[0].path : null;
+    const imageUrl = (req.files && req.files.image && req.files.image[0].gcsUrl) ? req.files.image[0].gcsUrl : null;
+    const videoUrl = (req.files && req.files.video && req.files.video[0].gcsUrl) ? req.files.video[0].gcsUrl : null;
     const post_date = new Date().toISOString().slice(0, 10);
 
     let conn;
@@ -84,7 +84,10 @@ router.post('/blog', protect, isAdmin, upload.fields([{ name: 'image', maxCount:
             "INSERT INTO blog_posts (title, excerpt, category, paragraphs, post_date, image_url, video_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [title, excerpt, category, paragraphs, post_date, imageUrl, videoUrl]
         );
-        // ## CORREÇÃO APLICADA AQUI ##
+
+        // Adaptação da resposta para incluir o ID corretamente
+         const insertId = Array.isArray(result) ? result[0].insertId : result.insertId;
+
         res.status(201).json({ message: 'Post criado com sucesso!', id: String(result.insertId) });
     } catch (error) {
         console.error("Erro ao criar post:", error);
@@ -108,8 +111,8 @@ router.put('/blog/:id', protect, isAdmin, upload.fields([{ name: 'image', maxCou
         }
         const post = posts[0];
 
-        const imageUrl = (req.files && req.files.image) ? req.files.image[0].path : post.image_url;
-        const videoUrl = (req.files && req.files.video) ? req.files.video[0].path : post.video_url;
+        const imageUrl = (req.files && req.files.image && req.files.image[0].gcsUrl) ? req.files.image[0].gcsUrl : post.image_url;
+        const videoUrl = (req.files && req.files.video && req.files.video[0].gcsUrl) ? req.files.video[0].gcsUrl : post.video_url;
 
         // Garante que a data esteja no formato AAAA-MM-DD
         const formattedDate = new Date(post_date).toISOString().slice(0, 10);
@@ -174,8 +177,8 @@ router.get('/testimonials', async (req, res) => {
 
 router.post('/testimonials', protect, isAdmin, upload.fields([{ name: 'photo', maxCount: 1 }, { name: 'video', maxCount: 1 }]), async (req, res) => {
     const { quote, name, role } = req.body;
-    const photoUrl = req.files.photo ? req.files.photo[0].path : null;
-    const videoUrl = req.files.video ? req.files.video[0].path : null;
+    const photoUrl = (req.files && req.files.photo && req.files.photo[0].gcsUrl) ? req.files.photo[0].gcsUrl : null;
+    const videoUrl = (req.files && req.files.video && req.files.video[0].gcsUrl) ? req.files.video[0].gcsUrl : null;
 
     let conn;
     try {
@@ -184,6 +187,7 @@ router.post('/testimonials', protect, isAdmin, upload.fields([{ name: 'photo', m
             "INSERT INTO testimonials (quote, name, role, photo_url, video_url) VALUES (?, ?, ?, ?, ?)",
             [quote, name, role, photoUrl, videoUrl]
         );
+        const insertId = Array.isArray(result) ? result[0].insertId : result.insertId;
         res.status(201).json({ message: 'Depoimento criado com sucesso!', id: String(result.insertId) });
     } catch (error) {
         res.status(500).json({ message: 'Erro ao criar depoimento.', error: error.message });
@@ -213,8 +217,8 @@ router.put('/testimonials/:id', protect, isAdmin, upload.fields([{ name: 'photo'
     try {
         conn = await pool.getConnection();
         const [testimonial] = await conn.query("SELECT photo_url, video_url FROM testimonials WHERE id = ?", [id]);
-        const photoUrl = req.files.photo ? req.files.photo[0].path : testimonial.photo_url;
-        const videoUrl = req.files.video ? req.files.video[0].path : testimonial.video_url;
+        const photoUrl = (req.files && req.files.photo && req.files.photo[0].gcsUrl) ? req.files.photo[0].gcsUrl : testimonial.photo_url;
+        const videoUrl = (req.files && req.files.video && req.files.video[0].gcsUrl) ? req.files.video[0].gcsUrl : testimonial.video_url;
         await conn.query(
             "UPDATE testimonials SET quote = ?, name = ?, role = ?, photo_url = ?, video_url = ? WHERE id = ?",
             [quote, name, role, photoUrl, videoUrl, id]
@@ -265,7 +269,7 @@ router.post('/services', protect, isAdmin, upload.single('image'), async (req, r
     let { title, slug, description, details } = req.body;
     slug = slug ? slug.trim() : slug;
 
-    const imageUrl = req.file ? req.file.path : null;
+    const imageUrl = (req.file && req.file.gcsUrl) ? req.file.gcsUrl : null;
 
     if (!title || !slug) {
         return res.status(400).json({ message: 'Título e Slug são campos obrigatórios.' });
@@ -280,7 +284,8 @@ router.post('/services', protect, isAdmin, upload.single('image'), async (req, r
             "INSERT INTO services (title, slug, description, details, image_url) VALUES (?, ?, ?, ?, ?)",
             [title, slug, description, details, imageUrl] 
         );
-        res.status(201).json({ message: 'Serviço criado com sucesso!', id: String(result.insertId) });
+        const insertId = Array.isArray(result) ? result[0].insertId : result.insertId;
+        res.status(201).json({ message: 'Serviço criado com sucesso!', id: String(insertId) });
     } catch (error) {
         console.error("Erro ao criar serviço:", error);
         if (error.code === 'ER_DUP_ENTRY') {
@@ -316,7 +321,7 @@ router.put('/services/:id', protect, isAdmin, upload.single('image'), async (req
         }
         const service = services[0];
         
-        const imageUrl = req.file ? req.file.path : service.image_url;
+        const imageUrl = (req.file && req.file.gcsUrl) ? req.file.gcsUrl : service.image_url;
         await conn.query(
             "UPDATE services SET title = ?, slug = ?, description = ?, details = ?, image_url = ? WHERE id = ?",
             [title, slug, description, details, imageUrl, id] // O slug já vai corrigido para o DB
@@ -418,8 +423,13 @@ router.put('/tpt', protect, isAdmin, upload.single('about_image'), async (req, r
         delete updateObject.updated_at;
 
         // 3. Atualiza a URL da imagem se um novo arquivo foi enviado
-        if (req.file) {
-            updateObject.about_image_url = req.file.path;
+        if (req.file && req.file.gcsUrl) { // <<< Verifica se gcsUrl existe
+            updateObject.about_image_url = req.file.gcsUrl; // <<< Linha corrigida
+        } else if (req.file) {
+             console.warn(`[PUT /tpt] Arquivo ${req.file.originalname} recebido, mas URL GCS não encontrada. Mantendo URL antiga se existir.`);
+             // Remove a propriedade para não tentar salvar undefined ou sobrescrever com null
+             // A URL antiga (se houver) será mantida no JSON_MERGE_PATCH implícito
+             delete updateObject.about_image_url;
         }
         
         // 4. Constrói a query de UPDATE dinamicamente
@@ -569,35 +579,62 @@ router.put('/site', protect, isAdmin, upload.fields([
         // --- PASSO 2: Adicionar/Sobrescrever URLs dos NOVOS arquivos ---
         if (req.files) {
             console.log('[PUT /site] Processing uploaded files to merge URLs...');
+
             // Home Section Files
             if (updatedSectionKey === 'home' && req.files.hero_video) {
-                // ATRIBUIÇÃO CORRETA:
-                dataToMerge.hero_video_url = req.files.hero_video[0].path; //
-                console.log(`[PUT /site] Merged hero_video_url: ${dataToMerge.hero_video_url}`);
+                const file = req.files.hero_video[0];
+                if (file && file.gcsUrl) { // <<< Verifica se gcsUrl existe
+                    dataToMerge.hero_video_url = file.gcsUrl; // <<< Usa gcsUrl
+                    console.log(`[PUT /site] Merged hero_video_url: ${dataToMerge.hero_video_url}`);
+                } else {
+                    console.warn(`[PUT /site] hero_video recebido, mas GCS URL não encontrada. Mantendo URL antiga se existir.`);
+                    delete dataToMerge.hero_video_url; // Remove para manter o valor antigo no merge
+                }
             }
             if (updatedSectionKey === 'home' && req.files.tpt_media) {
                 const file = req.files.tpt_media[0];
-                // ATRIBUIÇÃO CORRETA:
-                dataToMerge.tpt_media_url = file.path; //
-                dataToMerge.tpt_media_type = file.mimetype.startsWith('video') ? 'video' : 'image'; //
-                console.log(`[PUT /site] Merged tpt_media_url: ${dataToMerge.tpt_media_url}, type: ${dataToMerge.tpt_media_type}`);
+                if (file && file.gcsUrl) { // <<< Verifica se gcsUrl existe
+                    dataToMerge.tpt_media_url = file.gcsUrl; // <<< Usa gcsUrl
+                    dataToMerge.tpt_media_type = file.mimetype.startsWith('video') ? 'video' : 'image';
+                    console.log(`[PUT /site] Merged tpt_media_url: ${dataToMerge.tpt_media_url}, type: ${dataToMerge.tpt_media_type}`);
+                } else {
+                    console.warn(`[PUT /site] tpt_media recebido, mas GCS URL não encontrada. Mantendo URL antiga se existir.`);
+                    delete dataToMerge.tpt_media_url; // Remove para manter o valor antigo no merge
+                    delete dataToMerge.tpt_media_type;
+                }
             }
+
             // About Section Files
             if (updatedSectionKey === 'about' && req.files.about_logo) {
-                dataToMerge.logo_url = req.files.about_logo[0].path; // Sobrescreve/adiciona
-                console.log(`[PUT /site] Merged about logo_url: ${dataToMerge.logo_url}`);
+                const file = req.files.about_logo[0];
+                if (file && file.gcsUrl) { // <<< Verifica se gcsUrl existe
+                    dataToMerge.logo_url = file.gcsUrl; // <<< Usa gcsUrl
+                    console.log(`[PUT /site] Merged about logo_url: ${dataToMerge.logo_url}`);
+                } else {
+                     console.warn(`[PUT /site] about_logo recebido, mas GCS URL não encontrada. Mantendo URL antiga se existir.`);
+                     delete dataToMerge.logo_url; // Remove para manter o valor antigo no merge
+                }
             }
             if (updatedSectionKey === 'about' && req.files.partner_logos) {
-                // Pega os logos existentes (que vieram do JSON parseado) e adiciona os novos
                 const existingLogos = Array.isArray(dataToMerge.partner_logos) ? dataToMerge.partner_logos : [];
-                const newLogoUrls = req.files.partner_logos.map(file => file.path); // Obtém novos paths
+                // Filtra apenas os arquivos que tiveram upload bem-sucedido para GCS
+                const newLogoUrls = req.files.partner_logos
+                                        .filter(file => file && file.gcsUrl) // <<< Filtra por gcsUrl existente
+                                        .map(file => file.gcsUrl); // <<< Mapeia para gcsUrl
                 dataToMerge.partner_logos = [...existingLogos, ...newLogoUrls]; // Combina
-                console.log(`[PUT /site] Merged ${newLogoUrls.length} new partner logo URLs. Total now: ${dataToMerge.partner_logos.length}`);
+                console.log(`[PUT /site] Merged ${newLogoUrls.length} new partner logo URLs (GCS success). Total now: ${dataToMerge.partner_logos.length}`);
             }
+
             // Founder Section File
             if (updatedSectionKey === 'founder' && req.files.founder_image) {
-                dataToMerge.image_url = req.files.founder_image[0].path; // Sobrescreve/adiciona
-                console.log(`[PUT /site] Merged founder image_url: ${dataToMerge.image_url}`);
+                const file = req.files.founder_image[0];
+                if (file && file.gcsUrl) { // <<< Verifica se gcsUrl existe
+                    dataToMerge.image_url = file.gcsUrl; // <<< Usa gcsUrl
+                    console.log(`[PUT /site] Merged founder image_url: ${dataToMerge.image_url}`);
+                } else {
+                    console.warn(`[PUT /site] founder_image recebido, mas GCS URL não encontrada. Mantendo URL antiga se existir.`);
+                    delete dataToMerge.image_url; // Remove para manter o valor antigo no merge
+                }
             }
         } else {
             console.log('[PUT /site] No new files received in req.files.');
