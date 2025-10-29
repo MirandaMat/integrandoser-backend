@@ -99,7 +99,7 @@ const uploadToGCS = (req, res, next) => {
                 console.error(`[GCS UPLOAD] Erro no stream para ${destinationFileName}:`, err);
                 reject(err);
             });
-
+            /*
             blobStream.on('finish', () => {
                 const publicUrl = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
                 console.log(`[GCS UPLOAD] Upload concluído: ${destinationFileName} -> ${publicUrl}`);
@@ -110,8 +110,29 @@ const uploadToGCS = (req, res, next) => {
                 fileToUpload.gcsFilename = destinationFileName; // Salva o nome final também
                 resolve();
             });
+            */
+            blobStream.on('finish', async () => {
+                const publicUrl = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
+                console.log(`[GCS UPLOAD] Upload concluído: ${destinationFileName} -> ${publicUrl}`);
+
+                try {
+                    await blob.makePublic();
+                    console.log(`[GCS UPLOAD] Objeto ${destinationFileName} tornado público.`);
+
+                } catch (err) {
+                    console.error(`[GCS UPLOAD] Falha ao tornar objeto público:`, err);
+                    reject(err); // Rejeita a promessa se não conseguir tornar público
+                    return;
+                }
+
+                fileToUpload.gcsUrl = publicUrl;
+                fileToUpload.gcsFilename = destinationFileName; // Salva o nome final também
+                resolve();
+            });
 
             blobStream.end(fileToUpload.buffer); // Envia o buffer da memória
+            
+
         });
     };
 
