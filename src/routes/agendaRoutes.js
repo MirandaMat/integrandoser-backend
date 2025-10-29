@@ -680,7 +680,7 @@ router.get('/my-appointments/professional', protect, async (req, res) => {
             JOIN patients p ON a.patient_id = p.id
             JOIN professionals prof ON a.professional_id = prof.id
             WHERE prof.user_id = ? 
-            ORDER BY a.appointment_time DESC;
+            ORDER BY a.appointment_time ASC;
         `;
         const rows = await conn.query(query, [userId]);
         res.json(serializeBigInts(rows));
