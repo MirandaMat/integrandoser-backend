@@ -38,8 +38,7 @@ const sendWelcomeEmail = async (to, tempPassword) => {
 
     try {
         const { data, error } = await resend.emails.send({
-            //from: `IntegrandoSer <${fromEmail}>`, // Remetente verificado
-            from: `IntegrandoSer <${fromEmail}>`,
+            from: `IntegrandoSer <${fromEmail}>`, // Remetente verificado
             to: [to], // Resend espera um array
             subject: subject,
             html: html,
@@ -78,7 +77,6 @@ const sendSchedulingEmail = async (to, name, scheduleLink) => {
     `;
     try {
         const { data, error } = await resend.emails.send({
-            //from: `IntegrandoSer <${fromEmail}>`,
             from: `IntegrandoSer <${fromEmail}>`,
             to: [to],
             subject: subject,
@@ -119,7 +117,6 @@ const sendConfirmationEmail = async (to, name, appointmentTime, meetingLink) => 
 
     try {
         const { data, error } = await resend.emails.send({
-            //from: `IntegrandoSer <${fromEmail}>`,
             from: `IntegrandoSer <${fromEmail}>`,
             to: [to],
             subject: subject,
