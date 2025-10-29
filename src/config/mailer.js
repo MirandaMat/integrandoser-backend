@@ -5,8 +5,7 @@ const { Resend } = require('resend'); // <--- Importado Resend
 // Inicialize o Resend com a chave de API do ambiente
 const resend = new Resend(process.env.RESEND_API_KEY);
 // Use o email verificado configurado nas variáveis de ambiente
-//const fromEmail = process.env.EMAIL_FROM_ADDRESS;
-const fromEmail = "onboarding@resend.dev"; 
+const fromEmail = process.env.EMAIL_FROM_ADDRESS;
 
 // Verificação inicial (opcional, mas bom para debug)
 if (!process.env.RESEND_API_KEY) {
