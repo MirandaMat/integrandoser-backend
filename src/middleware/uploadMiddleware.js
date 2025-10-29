@@ -14,25 +14,21 @@ if (!process.env.GCS_BUCKET_NAME || !process.env.GCS_PROJECT_ID || !process.env.
 }
 
 // Formata a chave privada (variáveis de ambiente no Railway podem quebrar as linhas)
-const gcsPrivateKey = process.env.GCS_PRIVATE_KEY.replace(/\\n/g, '\n');
+// ADICIONADO .trim() para remover quebras de linha extras no início ou fim
+const gcsPrivateKey = process.env.GCS_PRIVATE_KEY.replace(/\\n/g, '\n').trim(); // <<< MUDANÇA AQUI
 
-
-// --- !!!!! DEBUGGING LOGS !!!!! ---
+// --- !!!!! DEBUGGING LOGS (Pode remover depois que funcionar) !!!!! ---
 console.log('--- [GCS DEBUG] VERIFICANDO VARIÁVEIS ---');
 console.log(`[GCS DEBUG] GCS_PROJECT_ID: ${process.env.GCS_PROJECT_ID}`);
 console.log(`[GCS DEBUG] GCS_CLIENT_EMAIL: ${process.env.GCS_CLIENT_EMAIL}`);
 console.log(`[GCS DEBUG] GCS_BUCKET_NAME: ${process.env.GCS_BUCKET_NAME}`);
-// Log de forma segura (apenas o início e o fim da chave original)
-console.log(`[GCS DEBUG] GCS_PRIVATE_KEY (Original, Início): ${process.env.GCS_PRIVATE_KEY.substring(0, 40)}...`);
-console.log(`[GCS DEBUG] GCS_PRIVATE_KEY (Original, Fim): ...${process.env.GCS_PRIVATE_KEY.substring(process.env.GCS_PRIVATE_KEY.length - 40)}`);
-// Log da chave formatada
 console.log(`[GCS DEBUG] gcsPrivateKey (Formatada, Inicia com '-----BEGIN...'): ${gcsPrivateKey.startsWith('-----BEGIN PRIVATE KEY-----')}`);
 console.log(`[GCS DEBUG] gcsPrivateKey (Formatada, Termina com '...END PRIVATE KEY-----'): ${gcsPrivateKey.endsWith('-----END PRIVATE KEY-----')}`);
 console.log('--- [GCS DEBUG] TENTANDO INICIAR storageEngine... ---');
 // --- !!!!! FIM DO DEBUGGING !!!!! ---
 
 
-const gcsStorage = storageEngine({ // <-- Esta linha ainda vai falhar, mas teremos os logs
+const gcsStorage = storageEngine({
     bucket: process.env.GCS_BUCKET_NAME,
     projectId: process.env.GCS_PROJECT_ID,
     credentials: {
