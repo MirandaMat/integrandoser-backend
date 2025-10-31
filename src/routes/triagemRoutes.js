@@ -326,6 +326,8 @@ router.get('/list/:type', protect, isAdmin, async (req, res) => {
 // Rota para confirmar um cadastro da triagem e criar o usuário oficial
 router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
     const { type, id } = req.params;
+    const { userId: adminUserId } = req.user;
+    
     let conn;
     let sourceTable, targetTable, roleId;
 
@@ -412,7 +414,9 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
         
         // Tenta enviar o e-mail, mas não deixa que uma falha aqui quebre a resposta
         try {
-            await sendWelcomeEmail(triagemData.email, tempPasswordSource);
+            // Envia o e-mail com a nova senha temporária correta
+            await sendWelcomeEmail(triagemData.email, tempPasswordSource); 
+            
             // Se o e-mail foi enviado com sucesso, envia a resposta de sucesso
             return res.status(201).json({ 
                 message: `Usuário ${type.slice(0, -1)} criado com sucesso! E-mail de boas-vindas enviado.`,
