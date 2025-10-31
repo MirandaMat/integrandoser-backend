@@ -180,109 +180,7 @@ router.get('/professionals-revenue', [protect, isAdmin], async (req, res) => {
     }
 });
 
-/*
-router.post('/invoices', [protect, isAdmin], async (req, res) => {
-    const { userId, amount, dueDate, description } = req.body;
-    const creatorUserId = req.user.id || req.user.userId; 
 
-    if (!userId || !amount || !dueDate) {
-        return res.status(400).json({ message: 'Usuário, valor e data de vencimento são obrigatórios.' });
-    }
-
-    let conn; 
-    let invoiceId = null;
-    try {
-        conn = await db.getConnection(); 
-        await conn.beginTransaction();
-
-        const [lastInvoice] = await conn.query(
-            "SELECT created_at FROM invoices WHERE user_id = ? AND creator_user_id = ? ORDER BY created_at DESC LIMIT 1",
-            [userId, creatorUserId]
-        );
-
-        if (lastInvoice) {
-            const lastInvoiceDate = new Date(lastInvoice.created_at);
-            const today = new Date();
-            const timeDifference = today.getTime() - lastInvoiceDate.getTime();
-            const daysDifference = timeDifference / (1000 * 60 * 60 * 24);
-
-            if (daysDifference < 15) {
-                await conn.rollback();
-                return res.status(403).json({ 
-                    message: `Já existe uma cobrança recente para este profissional. Tente novamente em ${Math.ceil(15 - daysDifference)} dias.` 
-                });
-            }
-        }
-        
-        const result = await conn.query( 
-            'INSERT INTO invoices (user_id, creator_user_id, amount, due_date, description, status) VALUES (?, ?, ?, ?, ?, ?)',
-            [userId, creatorUserId, amount, dueDate, description, 'pending']
-        );
-        
-        let invoiceId;
-        if (Array.isArray(result) && result[0] && result[0].insertId) {
-            invoiceId = result[0].insertId;
-        } else if (result && result.insertId) {
-            invoiceId = result.insertId;
-        }
-        
-        if (invoiceId) {
-             // Busca o ID do perfil profissional a partir do user_id que foi cobrado
-            const [profProfile] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]); //
-            if (profProfile) {
-                // Atualiza o status dos itens em professional_billings para 'invoiced'
-                await conn.query(
-                    "UPDATE professional_billings SET status = 'invoiced', invoice_id = ? WHERE professional_id = ? AND status = 'unbilled'",
-                    [invoiceId, profProfile.id]
-                );
-            }
-            await conn.commit();
-            // Enviar notificação ao usuário sobre a nova fatura
-            const amountFormatted = parseFloat(amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-            await createNotification(
-                req,
-                userId, // The user receiving the invoice
-                'new_invoice',
-                `Uma nova cobrança de ${amountFormatted} foi gerada pela administração.`,
-                '/professional/financeiro' // Assuming admin bills professionals
-            );
-
-
-            const [recipientUser] = await conn.query("SELECT p.nome, u.email FROM professionals p JOIN users u ON p.user_id = u.id WHERE p.user_id = ?", [userId]);
-            if (recipientUser && recipientUser.email) {
-                try {
-                    await sendInvoiceNotificationEmail(
-                        recipientUser.email,
-                        recipientUser.nome,
-                        'Administração IntegrandoSer',
-                        amount,
-                        dueDate,
-                        invoiceId,
-                        'https://integrandoser.com.br/professional/financeiro' // Link para a página de finanças do profissional
-                    );
-                } catch (emailError) {
-                    console.error("AVISO: Fatura criada, mas o e-mail de notificação falhou.", emailError);
-                }
-            }
-            res.status(201).json({ 
-                message: 'Cobrança gerada com sucesso!', 
-                invoiceId: serializeBigInts({ id: invoiceId }).id 
-            });
-
-
-        } else {
-            throw new Error('Não foi possível obter o ID da fatura inserida.');
-        }
-
-    } catch (error) {
-        if (conn) await conn.rollback();
-        console.error('Error creating invoice:', error);
-        res.status(500).json({ message: 'Erro ao gerar cobrança.' });
-    } finally {
-        if (conn) conn.release(); 
-    }
-});
-*/
 router.post('/invoices', [protect, isAdmin], async (req, res) => {
     const { userId, amount, dueDate, description } = req.body; // userId aqui é o ID do profissional a ser cobrado
     const creatorUserId = req.user.id || req.user.userId; // ID do Admin logado
@@ -311,7 +209,7 @@ router.post('/invoices', [protect, isAdmin], async (req, res) => {
             const timeDifference = today.getTime() - lastInvoiceDate.getTime();
             const daysDifference = timeDifference / (1000 * 60 * 60 * 24);
 
-            if (daysDifference < 15) { // Limite de 15 dias (ajuste se necessário)
+            if (daysDifference < 5) { // Limite de 15 dias (ajuste se necessário)
                 await conn.rollback();
                 return res.status(403).json({
                     message: `Já existe uma cobrança recente para este profissional. Tente novamente em ${Math.ceil(15 - daysDifference)} dias.`
@@ -347,10 +245,10 @@ router.post('/invoices', [protect, isAdmin], async (req, res) => {
         // Busca dados para e-mail/notificação antes do commit
          [recipientUser] = await conn.query("SELECT p.nome, u.email FROM professionals p JOIN users u ON p.user_id = u.id WHERE p.user_id = ?", [userId]);
 
-        // <<< COMMIT AQUI >>>
+        
         await conn.commit();
 
-        // --- TENTATIVA DE ENVIO DE NOTIFICAÇÃO E E-MAIL (APÓS COMMIT) ---
+        
         try {
             const amountFormatted = parseFloat(amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
             // Cria notificação no DB (e tenta via Socket)

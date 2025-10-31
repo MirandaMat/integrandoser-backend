@@ -178,7 +178,10 @@ router.get('/:id', protect, async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
-        const users = await conn.query('SELECT id, email, role_id FROM users WHERE id = ?', [id]);
+        // =================================================================
+        // ## CORREÇÃO ##: Adicionado 'u.status' à query
+        // =================================================================
+        const users = await conn.query('SELECT id, email, role_id, status FROM users WHERE id = ?', [id]);
         if (!users || users.length === 0) {
             return res.status(404).json({ message: 'Usuário não encontrado.' });
         }
