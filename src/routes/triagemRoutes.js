@@ -223,8 +223,9 @@ router.patch('/status/:type/:id', protect, isAdmin, async (req, res) => {
         if (status === 'Confirmado') {
              await createNotification(req, req.user.userId, 'new_appointment', `Triagem #${id} (${type}) confirmada por você.`);
         }
+        
+        res.json({ message: 'Status atualizado com sucesso!' });
 
-        //res.json({ message: 'Status atualizado com sucesso!' });
     } catch (error) {
         console.error(`Erro ao atualizar status para ${type}:`, error);
         res.status(500).json({ message: 'Erro ao atualizar status.' });
