@@ -31,10 +31,11 @@ const port = process.env.PORT || 3001;
 
 // Configuração do CORS
 const allowedOrigins = [
-    'http://localhost:5173', // Para desenvolvimento local
-    'https://integrandoser.com.br', // <-- NOVO DOMÍNIO DE PRODUÇÃO ADICIONADO
-    'https://integrandoser.integrandoser.com.br', // Mantenha se ainda usar
-    process.env.FRONTEND_URL // Adicione a URL do frontend do .env por segurança
+    'http://localhost:5173', 
+    'https://integrandoser.com.br', 
+    'https://www.integrandoser.com.br',
+    'https://integrandoser.integrandoser.com.br', 
+    process.env.FRONTEND_URL 
 ];
 
 const corsOptions = {
