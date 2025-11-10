@@ -600,28 +600,34 @@ router.patch('/professional/patient/:patientId/status', protect, isProfissional,
     try {
         conn = await pool.getConnection();
 
-        // 1. VERIFICAR PERMISSÃO DO PROFISSIONAL (Habilitado)
-        const [profProfile] = await conn.query("SELECT id, level FROM professionals WHERE user_id = ?", [professionalUserId]);
-        if (!profProfile || profProfile.level !== 'Profissional Habilitado') {
-            return res.status(403).json({ message: 'Você não tem permissão para alterar o status de pacientes.' });
-        }
-        const professionalId = profProfile.id;
-
-        // 2. VERIFICAR SE O PROFISSIONAL TEM VÍNCULO COM O PACIENTE (criou ou tem agendamento)
-        // (Usando a mesma lógica da rota PUT de edição)
-        const [assignment] = await conn.query(
-            `SELECT p.user_id FROM patients p 
-             LEFT JOIN appointments a ON a.patient_id = p.id
-             WHERE p.id = ? AND (p.created_by_professional_id = ? OR a.professional_id = ?)`,
-            [patientId, professionalId, professionalId]
+        // 1. OTIMIZAÇÃO: Verifica permissão (level) e vínculo (assignment) em UMA query
+        const [profAndLink] = await conn.query(
+            `SELECT 
+                p.id as professionalId, 
+                p.level,
+                pat.user_id as patientUserId
+            FROM professionals p
+            JOIN patients pat ON pat.id = ?
+            LEFT JOIN appointments a ON a.patient_id = pat.id AND a.professional_id = p.id
+            WHERE p.user_id = ? 
+              AND (pat.created_by_professional_id = p.id OR a.professional_id = p.id)
+            GROUP BY p.id, p.level, pat.user_id
+            LIMIT 1`,
+            [patientId, professionalUserId]
         );
 
-        if (!assignment) {
-            return res.status(403).json({ message: 'Você não tem permissão para modificar este paciente.' });
+        // 2. Valida o resultado da query otimizada
+        if (!profAndLink) {
+             return res.status(403).json({ message: 'Você não tem permissão para modificar este paciente (vínculo não encontrado).' });
+        }
+        
+        if (profAndLink.level !== 'Profissional Habilitado') {
+             return res.status(403).json({ message: 'Você não tem permissão para alterar o status de pacientes.' });
         }
 
-        const patientUserId = assignment.user_id;
+        const patientUserId = profAndLink.patientUserId;
 
+        // Inicia a transação APÓS as verificações
         await conn.beginTransaction();
 
         // 3. ATUALIZAR O STATUS NA TABELA 'users'
@@ -632,8 +638,6 @@ router.patch('/professional/patient/:patientId/status', protect, isProfissional,
             ? 'Sua conta foi desbloqueada pelo seu profissional.' 
             : 'Sua conta foi bloqueada pelo seu profissional. Entre em contato para mais detalhes.';
         
-        // O service 'createNotification' espera o objeto 'req'
-        // Como estamos numa rota, podemos passar o 'req' original
         await createNotification(req, patientUserId, 'profile_update', message);
 
         await conn.commit();
