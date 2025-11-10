@@ -136,7 +136,7 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
         }
         const professionalId = profProfileRows[0].id;
 
-        // Query modificada para incluir o email do paciente a partir da tabela 'users'
+        // Query modificada para incluir o email, status E imagem_url do paciente
         const patientsQuery = `
             SELECT DISTINCT 
                 p.id, 
@@ -145,7 +145,9 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
                 p.cpf, 
                 p.telefone, 
                 p.data_nascimento, 
-                u.email
+                p.imagem_url, -- <-- CAMPO DE IMAGEM ADICIONADO
+                u.email,
+                u.status
             FROM patients p
             JOIN users u ON p.user_id = u.id
             LEFT JOIN appointments a ON p.id = a.patient_id
