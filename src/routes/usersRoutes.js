@@ -654,7 +654,6 @@ router.patch('/professional/patient/:patientId/status', protect, isProfissional,
 });
 
 
-
 // ROTA PARA O PROFISSIONAL HABILITADO ATUALIZAR UM PACIENTE
 router.put('/professional/patient/:patientId', protect, isProfissional, async (req, res) => {
     const { patientId } = req.params;
@@ -668,6 +667,7 @@ router.put('/professional/patient/:patientId', protect, isProfissional, async (r
     let conn;
     try {
         conn = await pool.getConnection();
+        await conn.beginTransaction(); // <-- Inicia transação
 
         // Se a data de nascimento vier como uma string vazia, converte para null
         if (profileData.data_nascimento === '') {
@@ -677,38 +677,65 @@ router.put('/professional/patient/:patientId', protect, isProfissional, async (r
         // 1. VERIFICAR PERMISSÃO DO PROFISSIONAL
         const [profProfile] = await conn.query("SELECT id, level FROM professionals WHERE user_id = ?", [professionalUserId]);
         if (!profProfile || profProfile.level !== 'Profissional Habilitado') {
+            await conn.rollback();
             return res.status(403).json({ message: 'Você não tem permissão para editar pacientes.' });
         }
         const professionalId = profProfile.id;
 
-        // 2. VERIFICAR SE O PROFISSIONAL TEM VÍNCULO COM O PACIENTE (criou ou tem agendamento)
+        // 2. VERIFICAR VÍNCULO E PEGAR user_id
         const [assignment] = await conn.query(
-            `SELECT p.id FROM patients p 
+            `SELECT p.id, p.user_id FROM patients p 
              LEFT JOIN appointments a ON a.patient_id = p.id
-             WHERE p.id = ? AND (p.created_by_professional_id = ? OR a.professional_id = ?)`,
+             WHERE p.id = ? AND (p.created_by_professional_id = ? OR a.professional_id = ?)
+             GROUP BY p.id, p.user_id`, // Garante um resultado único
             [patientId, professionalId, professionalId]
         );
+
         if (!assignment) {
+            await conn.rollback();
             return res.status(403).json({ message: 'Você não tem permissão para editar este paciente.' });
         }
         
-        // 3. ATUALIZAR OS DADOS DO PACIENTE
-        // (Campos permitidos para edição)
-        const allowedFields = ['nome', 'cpf', 'telefone', 'data_nascimento']; 
-        const fieldsToUpdate = allowedFields.filter(field => profileData[field] !== undefined);
+        const patientUserId = assignment.user_id; // <-- Pega o user_id do paciente
+
+        // 3. ATUALIZAR OS DADOS DO PERFIL (tabela patients)
+        const allowedPatientFields = ['nome', 'cpf', 'telefone', 'data_nascimento']; 
+        const fieldsToUpdate = allowedPatientFields.filter(field => profileData[field] !== undefined);
         
-        if (fieldsToUpdate.length === 0) {
+        let profileUpdated = false;
+        if (fieldsToUpdate.length > 0) {
+            const setClause = fieldsToUpdate.map(field => `${field} = ?`).join(', ');
+            const values = fieldsToUpdate.map(field => profileData[field]);
+            
+            await conn.query(`UPDATE patients SET ${setClause} WHERE id = ?`, [...values, patientId]);
+            profileUpdated = true;
+        }
+
+        // 4. ATUALIZAR DADOS DE USUÁRIO (tabela users) - NOVO
+        let userUpdated = false;
+        if (profileData.email && typeof profileData.email === 'string') {
+            // Verifica se o novo email já está em uso por OUTRO usuário
+            const [existingEmail] = await conn.query("SELECT id FROM users WHERE email = ? AND id != ?", [profileData.email, patientUserId]);
+            if (existingEmail) {
+                await conn.rollback();
+                return res.status(409).json({ message: 'Este email já está em uso por outro usuário.' });
+            }
+            // Atualiza o email na tabela users
+            await conn.query("UPDATE users SET email = ? WHERE id = ?", [profileData.email, patientUserId]);
+            userUpdated = true;
+        }
+
+        // 5. Finalizar
+        if (!profileUpdated && !userUpdated) {
+            await conn.rollback();
             return res.status(400).json({ message: 'Nenhum campo válido para atualização foi fornecido.' });
         }
 
-        const setClause = fieldsToUpdate.map(field => `${field} = ?`).join(', ');
-        const values = fieldsToUpdate.map(field => profileData[field]);
-        
-        await conn.query(`UPDATE patients SET ${setClause} WHERE id = ?`, [...values, patientId]);
-
+        await conn.commit(); // <-- Confirma a transação
         res.json({ message: 'Paciente atualizado com sucesso.' });
 
     } catch (error) {
+        if (conn) await conn.rollback(); // <-- Desfaz em caso de erro
         console.error("Erro ao atualizar paciente:", error);
         res.status(500).json({ message: 'Erro interno no servidor.' });
     } finally {
