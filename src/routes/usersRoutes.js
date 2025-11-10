@@ -94,7 +94,7 @@ router.get('/', protect, isAdmin, async (req, res) => {
     }
 });
 
-// GET /api/users/role/professionals - Rota de ADMIN para buscar todos os profissionais
+// GET /api/users/role/professionals - Rota de ADMIN para buscar todos os profissionai
 router.get('/role/professionals', protect, isAdmin, async (req, res) => {
     let conn;
     try {
@@ -582,6 +582,71 @@ router.post('/professional/create-patient', protect, isProfissional, async (req,
         if (conn) conn.release();
     }
 });
+
+
+// ROTA PARA O PROFISSIONAL HABILITADO BLOQUEAR/DESBLOQUEAR UM PACIENTE
+router.patch('/professional/patient/:patientId/status', protect, isProfissional, async (req, res) => {
+    const { patientId } = req.params;
+    const { status } = req.body; // 'active' or 'blocked'
+    const { userId: professionalUserId } = req.user;
+
+    if (!status || (status !== 'active' && status !== 'blocked')) {
+        return res.status(400).json({ message: 'Status inválido. Use "active" ou "blocked".' });
+    }
+
+    let conn;
+    try {
+        conn = await pool.getConnection();
+
+        // 1. VERIFICAR PERMISSÃO DO PROFISSIONAL (Habilitado)
+        const [profProfile] = await conn.query("SELECT id, level FROM professionals WHERE user_id = ?", [professionalUserId]);
+        if (!profProfile || profProfile.level !== 'Profissional Habilitado') {
+            return res.status(403).json({ message: 'Você não tem permissão para alterar o status de pacientes.' });
+        }
+        const professionalId = profProfile.id;
+
+        // 2. VERIFICAR SE O PROFISSIONAL TEM VÍNCULO COM O PACIENTE (criou ou tem agendamento)
+        // (Usando a mesma lógica da rota PUT de edição)
+        const [assignment] = await conn.query(
+            `SELECT p.user_id FROM patients p 
+             LEFT JOIN appointments a ON a.patient_id = p.id
+             WHERE p.id = ? AND (p.created_by_professional_id = ? OR a.professional_id = ?)`,
+            [patientId, professionalId, professionalId]
+        );
+
+        if (!assignment) {
+            return res.status(403).json({ message: 'Você não tem permissão para modificar este paciente.' });
+        }
+
+        const patientUserId = assignment.user_id;
+
+        await conn.beginTransaction();
+
+        // 3. ATUALIZAR O STATUS NA TABELA 'users'
+        await conn.query("UPDATE users SET status = ? WHERE id = ?", [status, patientUserId]);
+
+        // 4. CRIAR NOTIFICAÇÃO PARA O PACIENTE
+        const message = status === 'active' 
+            ? 'Sua conta foi desbloqueada pelo seu profissional.' 
+            : 'Sua conta foi bloqueada pelo seu profissional. Entre em contato para mais detalhes.';
+        
+        // O service 'createNotification' espera o objeto 'req'
+        // Como estamos numa rota, podemos passar o 'req' original
+        await createNotification(req, patientUserId, 'profile_update', message);
+
+        await conn.commit();
+
+        res.json({ message: `Status do paciente atualizado para ${status}.`, newStatus: status });
+
+    } catch (error) {
+        if (conn) await conn.rollback();
+        console.error("Erro ao alterar status do paciente:", error);
+        res.status(500).json({ message: 'Erro interno no servidor.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
 
 
 // ROTA PARA O PROFISSIONAL HABILITADO ATUALIZAR UM PACIENTE
