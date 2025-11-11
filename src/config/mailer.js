@@ -232,6 +232,53 @@ const sendReceiptUploadNotificationEmail = async (recipientEmail, recipientName,
     }
 };
 
+
+// FUNÇÃO: E-MAIL DE REDEFINIÇÃO DE SENHA
+const sendPasswordResetEmail = async (to, tempPassword) => {
+    const subject = 'Sua nova senha temporária - IntegrandoSer';
+    const html = `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+            <h2>Redefinição de Senha</h2>
+            <p>Olá,</p>
+            <p>Você solicitou uma redefinição de senha para sua conta no IntegrandoSer.</p>
+            <p>Use a senha temporária abaixo para fazer login:</p>
+            <p style="font-size: 1.5em; font-weight: bold; color: #8B5CF6; letter-spacing: 2px; margin: 20px 0;">
+                ${tempPassword}
+            </p>
+            <p>
+                <strong>Importante:</strong> Por motivos de segurança, você será 
+                <strong>obrigado a definir uma nova senha</strong> 
+                imediatamente após o login.
+            </p>
+            <p>Acesse a plataforma em: <a href="https://integrandoser.com.br/login">Fazer Login</a></p>
+            <br>
+            <p>Se você não solicitou isso, por favor, ignore este e-mail.</p>
+            <p>Atenciosamente,</p>
+            <p><strong>Equipe IntegrandoSer</strong></p>
+        </div>
+    `;
+
+    try {
+        const { data, error } = await resend.emails.send({
+            from: `IntegrandoSer <${fromEmail}>`,
+            to: [to],
+            subject: subject,
+            html: html,
+        });
+
+        if (error) {
+            console.error(`Erro ao enviar e-mail de redefinição (Resend) para ${to}:`, error);
+            throw error;
+        }
+
+        console.log(`E-mail de redefinição enviado (Resend) para ${to}. ID: ${data?.id || 'N/A'}`);
+
+    } catch (error) {
+        console.error(`Falha catastrófica ao tentar enviar e-mail de redefinição (Resend) para ${to}:`, error);
+        throw error;
+    }
+};
+
 // Exporta todas as funções adaptadas
 module.exports = {
     sendWelcomeEmail,
