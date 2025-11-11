@@ -167,44 +167,76 @@ router.post('/', protect, upload.array('attachments'), async (req, res) => {
         conn = await pool.getConnection();
         await conn.beginTransaction();
 
-        // --- LÓGICA DE PERMISSÃO (JÁ EXISTENTE E CORRETA) ---
+        // --- LÓGICA DE PERMISSÃO (REESCRITA) ---
         let hasPermission = false;
-        if (senderRole === 'ADM') {
+        
+        // 1. Verificar se o destinatário existe
+        const [recipientUser] = await conn.query('SELECT r.name as role FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ?', [recipient_id]);
+        if (!recipientUser) {
+            await conn.rollback();
+            return res.status(404).json({ message: "Destinatário não encontrado." });
+        }
+        const recipientRole = recipientUser.role;
+
+        // Regra 1: ADMs podem falar com todos, e todos podem falar com ADMs
+        if (senderRole === 'ADM' || recipientRole === 'ADM') {
             hasPermission = true;
+        } 
+        // Regra 2: Profissionais podem falar com outros Profissionais
+        else if (senderRole === 'PROFISSIONAL' && recipientRole === 'PROFISSIONAL') {
+            hasPermission = true;
+        } 
+        // Regra 3: Paciente <-> Profissional (requer vínculo)
+        else if ((senderRole === 'PROFISSIONAL' && recipientRole === 'PACIENTE') || (senderRole === 'PACIENTE' && recipientRole === 'PROFISSIONAL')) {
+            const professional_user_id = (senderRole === 'PROFISSIONAL') ? sender_id : recipient_id;
+            const patient_user_id = (senderRole === 'PACIENTE') ? sender_id : recipient_id;
+            
+            const [checkRelation] = await conn.query(`
+                SELECT 1
+                FROM professionals prof
+                JOIN patients pat ON prof.user_id = ? AND pat.user_id = ?
+                LEFT JOIN professional_assignments pa ON pa.professional_id = prof.id AND pa.patient_id = pat.id
+                LEFT JOIN appointments app ON app.professional_id = prof.id AND app.patient_id = pat.id
+                WHERE pa.id IS NOT NULL OR app.id IS NOT NULL OR pat.created_by_professional_id = prof.id
+                LIMIT 1;
+            `, [professional_user_id, patient_user_id]);
+
+            if (checkRelation) hasPermission = true;
         }
+        // Regra 4: Paciente <-> Empresa (requer vínculo)
+        else if ((senderRole === 'EMPRESA' && recipientRole === 'PACIENTE') || (senderRole === 'PACIENTE' && recipientRole === 'EMPRESA')) {
+            const empresa_user_id = (senderRole === 'EMPRESA') ? sender_id : recipient_id;
+            const patient_user_id = (senderRole === 'PACIENTE') ? sender_id : recipient_id;
 
-        if (!hasPermission) {
-            const [recipientUser] = await conn.query('SELECT r.name as role FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ?', [recipient_id]);
-            if (!recipientUser) {
-                await conn.rollback();
-                return res.status(404).json({ message: "Destinatário não encontrado." });
-            }
-            const recipientRole = recipientUser.role;
+            const [checkRelation] = await conn.query(`
+                SELECT 1
+                FROM companies c
+                JOIN patients p ON c.id = p.company_id
+                WHERE c.user_id = ? AND p.user_id = ?
+                LIMIT 1;
+            `, [empresa_user_id, patient_user_id]);
 
-            if (recipientRole === 'ADM') {
-                hasPermission = true;
-            } 
-            else if ((senderRole === 'PROFISSIONAL' && recipientRole === 'PACIENTE') || (senderRole === 'PACIENTE' && recipientRole === 'PROFISSIONAL')) {
-                const professional_user_id = senderRole === 'PROFISSIONAL' ? sender_id : recipient_id;
-                const patient_user_id = senderRole === 'PACIENTE' ? sender_id : recipient_id;
-
-                const [checkRelation] = await conn.query(`
-                    SELECT 1
-                    FROM professionals prof
-                    JOIN patients pat ON prof.user_id = ? AND pat.user_id = ?
-                    LEFT JOIN professional_assignments pa ON pa.professional_id = prof.id AND pa.patient_id = pat.id
-                    LEFT JOIN appointments app ON app.professional_id = prof.id AND app.patient_id = pat.id
-                    WHERE 
-                        pa.id IS NOT NULL OR 
-                        app.id IS NOT NULL OR 
-                        pat.created_by_professional_id = prof.id
-                    LIMIT 1;
-                `, [professional_user_id, patient_user_id]);
-
-                if (checkRelation) hasPermission = true;
-            }
-            // ... (outras regras de permissão para EMPRESA, etc.)
+            if (checkRelation) hasPermission = true;
         }
+        // Regra 5: Empresa <-> Profissional (requer vínculo via paciente)
+        else if ((senderRole === 'EMPRESA' && recipientRole === 'PROFISSIONAL') || (senderRole === 'PROFISSIONAL' && recipientRole === 'EMPRESA')) {
+            const empresa_user_id = (senderRole === 'EMPRESA') ? sender_id : recipient_id;
+            const professional_user_id = (senderRole === 'PROFISSIONAL') ? sender_id : recipient_id;
+
+            const [checkRelation] = await conn.query(`
+                SELECT 1
+                FROM companies c
+                JOIN patients p ON c.id = p.company_id
+                LEFT JOIN professional_assignments pa ON pa.patient_id = p.id
+                LEFT JOIN appointments a ON a.patient_id = p.id
+                JOIN professionals prof ON (pa.professional_id = prof.id OR a.professional_id = prof.id OR p.created_by_professional_id = prof.id)
+                WHERE c.user_id = ? AND prof.user_id = ?
+                LIMIT 1;
+            `, [empresa_user_id, professional_user_id]);
+
+            if (checkRelation) hasPermission = true;
+        }
+        // --- FIM DA LÓGICA DE PERMISSÃO ---
         
         if (!hasPermission) {
             await conn.rollback();
@@ -376,61 +408,64 @@ router.get('/conversations/suggestions', protect, async (req, res) => {
                 ORDER BY u.id DESC LIMIT 6
             `;
         } 
-        // Regra 2: PACIENTE só pode conversar com seus PROFISSIONAIS designados
+        // Regra 2: PACIENTE só pode conversar com ADMs, seus PROFISSIONAIS e sua EMPRESA
         else if (role === 'PACIENTE') {
-            // Adicionamos um segundo '?' para a query UNION
-            queryParams.push(userId); 
+            queryParams.push(userId); // Adiciona o segundo userId para a query
+            queryParams.push(userId); // Adiciona o terceiro userId para a query
             query = `
                 (
-                    -- Seleciona os profissionais designados
-                    SELECT u.id, prof.nome as name, prof.imagem_url, 'PROFISSIONAL' as role
-                    FROM professional_assignments pa
-                    JOIN patients pat ON pa.patient_id = pat.id
-                    JOIN professionals prof ON pa.professional_id = prof.id
+                    -- 1. Seus Profissionais (vínculo por pa, app ou created_by)
+                    SELECT DISTINCT u.id, prof.nome as name, prof.imagem_url, 'PROFISSIONAL' as role
+                    FROM patients pat
+                    LEFT JOIN professional_assignments pa ON pa.patient_id = pat.id
+                    LEFT JOIN appointments a ON a.patient_id = pat.id
+                    JOIN professionals prof ON pa.professional_id = prof.id OR a.professional_id = prof.id OR pat.created_by_professional_id = prof.id
                     JOIN users u ON prof.user_id = u.id
                     WHERE pat.user_id = ?
                 )
                 UNION
                 (
-                    -- Seleciona a empresa associada, se houver
+                    -- 2. Sua Empresa (se houver)
                     SELECT u.id, c.nome_empresa as name, c.imagem_url, 'EMPRESA' as role
                     FROM patients p
                     JOIN companies c ON p.company_id = c.id
                     JOIN users u ON c.user_id = u.id
                     WHERE p.user_id = ? AND p.company_id IS NOT NULL
                 )
+                UNION
+                (
+                    -- 3. ADMs
+                    SELECT u.id, adm.nome as name, adm.imagem_url, 'ADM' as role
+                    FROM users u 
+                    JOIN roles r ON u.role_id = r.id 
+                    JOIN administrators adm ON u.id = adm.user_id
+                    WHERE r.name = 'ADM' AND u.id != ?
+                )
             `;
         }
-        // Regra 3: PROFISSIONAL só pode conversar com seus PACIENTES designados
+        // Regra 3: PROFISSIONAL pode conversar com ADMs, seus PACIENTES, EMPRESAS dos seus pacientes e outros PRO fissionais
         else if (role === 'PROFISSIONAL') {
-            // Primeiro, é necessário obter o ID do perfil do profissional
             const profProfileRows = await conn.query('SELECT id FROM professionals WHERE user_id = ?', [userId]);
+            if (!profProfileRows || profProfileRows.length === 0) return res.json([]);
             
-            // Se por algum motivo o perfil não for encontrado, retorna uma lista vazia
-            if (!profProfileRows || profProfileRows.length === 0) {
-                return res.json([]);
-            }
             const professionalId = profProfileRows[0].id;
             
-            // Prepara os parâmetros para a consulta principal. Repetimos o ID do profissional para cada sub-consulta.
             queryParams = [
-                professionalId, professionalId, professionalId, // Parâmetros para a consulta de pacientes
-                professionalId, professionalId, professionalId  // Parâmetros para a consulta de empresas
+                professionalId, professionalId, professionalId, // Para pacientes
+                professionalId, professionalId, professionalId, // Para empresas
+                userId // Para excluir a si mesmo da lista de profissionais
             ];
 
-            // A query agora une três fontes de dados distintas
             query = `
                 (
-                    -- 1. Seleciona todos os usuários com perfil de Administrador
+                    -- 1. ADMs
                     SELECT u.id, adm.nome as name, adm.imagem_url, 'ADM' as role
-                    FROM users u
-                    JOIN roles r ON u.role_id = r.id
-                    JOIN administrators adm ON u.id = adm.user_id
+                    FROM users u JOIN roles r ON u.role_id = r.id JOIN administrators adm ON u.id = adm.user_id
                     WHERE r.name = 'ADM'
                 )
                 UNION
                 (
-                    -- 2. Seleciona pacientes distintos associados por designação, agendamento ou criação
+                    -- 2. Seus Pacientes
                     SELECT DISTINCT u.id, p.nome as name, p.imagem_url, 'PACIENTE' as role
                     FROM patients p
                     JOIN users u ON p.user_id = u.id
@@ -440,7 +475,7 @@ router.get('/conversations/suggestions', protect, async (req, res) => {
                 )
                 UNION
                 (
-                    -- 3. Seleciona as empresas distintas vinculadas aos pacientes encontrados no item 2
+                    -- 3. Empresas dos seus Pacientes
                     SELECT DISTINCT u.id, c.nome_empresa as name, c.imagem_url, 'EMPRESA' as role
                     FROM companies c
                     JOIN users u ON c.user_id = u.id
@@ -449,20 +484,52 @@ router.get('/conversations/suggestions', protect, async (req, res) => {
                     LEFT JOIN appointments a ON p.id = a.patient_id
                     WHERE (pa.professional_id = ? OR a.professional_id = ? OR p.created_by_professional_id = ?) AND p.company_id IS NOT NULL
                 )
+                UNION
+                (
+                    -- 4. Outros Profissionais (excluindo a si mesmo)
+                    SELECT u.id, prof.nome as name, prof.imagem_url, 'PROFISSIONAL' as role
+                    FROM users u
+                    JOIN roles r ON u.role_id = r.id
+                    JOIN professionals prof ON u.id = prof.user_id
+                    WHERE r.name = 'PROFISSIONAL' AND u.id != ?
+                )
             `;
         } 
-        // NOVA Regra 4: EMPRESA pode conversar com seus PACIENTES (colaboradores)
+        // Regra 4: EMPRESA pode conversar com ADMs, seus PACIENTES (colaboradores) e PROFISSIONAIS dos seus pacientes
         else if (role === 'EMPRESA') {
+            queryParams.push(userId); // Adiciona o segundo userId para a query
+            queryParams.push(userId); // Adiciona o terceiro userId para a query
             query = `
-                SELECT u.id, p.nome as name, p.imagem_url, 'PACIENTE' as role
-                FROM companies c
-                JOIN patients p ON c.id = p.company_id
-                JOIN users u ON p.user_id = u.id
-                WHERE c.user_id = ?
-                ORDER BY p.nome ASC
+                (
+                    -- 1. Seus Pacientes (Colaboradores)
+                    SELECT u.id, p.nome as name, p.imagem_url, 'PACIENTE' as role
+                    FROM companies c
+                    JOIN patients p ON c.id = p.company_id
+                    JOIN users u ON p.user_id = u.id
+                    WHERE c.user_id = ?
+                )
+                UNION
+                (
+                    -- 2. ADMs
+                    SELECT u.id, adm.nome as name, adm.imagem_url, 'ADM' as role
+                    FROM users u JOIN roles r ON u.role_id = r.id JOIN administrators adm ON u.id = adm.user_id
+                    WHERE r.name = 'ADM' AND u.id != ?
+                )
+                UNION
+                (
+                    -- 3. Profissionais dos seus Pacientes
+                    SELECT DISTINCT u.id, prof.nome as name, prof.imagem_url, 'PROFISSIONAL' as role
+                    FROM companies c
+                    JOIN patients p ON c.id = p.company_id
+                    LEFT JOIN professional_assignments pa ON pa.patient_id = p.id
+                    LEFT JOIN appointments a ON a.patient_id = p.id
+                    JOIN professionals prof ON pa.professional_id = prof.id OR a.professional_id = prof.id OR p.created_by_professional_id = prof.id
+                    JOIN users u ON prof.user_id = u.id
+                    WHERE c.user_id = ?
+                )
             `; 
         } else {
-            // Outras roles
+            // Outras roles (não devem existir)
             return res.json([]);
         }
 
