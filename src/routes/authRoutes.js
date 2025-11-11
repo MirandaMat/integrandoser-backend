@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const pool = require('../config/db.js');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
-const { sendPasswordResetEmail } = require('../config/mailer.j');
+const { sendPasswordResetEmail } = require('../config/mailer.js');
 
 const router = express.Router();
 
