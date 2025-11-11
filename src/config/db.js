@@ -6,6 +6,9 @@ let pool;
 try {
   console.log('[DB_INIT] Attempting to create database pool...');
   
+  // Define o fuso horário padrão do Brasil
+  const appTimezone = process.env.TZ || 'America/Sao_Paulo';
+
   // Vamos logar a configuração exata que será usada
   const dbConfig = {
     host: process.env.DB_HOST,
@@ -14,7 +17,8 @@ try {
     database: process.env.DB_DATABASE,
     port: parseInt(process.env.DB_PORT || 3306),
     connectionLimit: 5,
-    allowPublicKeyRetrieval: true // <-- ESTA É A CORREÇÃO
+    allowPublicKeyRetrieval: true,
+    timezone: appTimezone // <-- ADICIONADO AQUI
   };
   console.log('[DB_INIT] Using config:', JSON.stringify(dbConfig));
 
@@ -25,7 +29,8 @@ try {
     database: process.env.DB_DATABASE,
     port: parseInt(process.env.DB_PORT || 3306),
     connectionLimit: 5,
-    allowPublicKeyRetrieval: true // <-- ESTA É A CORREÇÃO
+    allowPublicKeyRetrieval: true, 
+    timezone: appTimezone
   });
 
   console.log('[DB_INIT] Database pool CREATED successfully.');
