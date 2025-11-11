@@ -286,5 +286,6 @@ module.exports = {
     sendConfirmationEmail, // Agora adaptada
     sendUpdateEmail,       // Agora adaptada
     sendInvoiceNotificationEmail,
-    sendReceiptUploadNotificationEmail
+    sendReceiptUploadNotificationEmail,
+    sendPasswordResetEmail
 };
