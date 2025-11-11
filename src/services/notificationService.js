@@ -81,33 +81,29 @@ const createNotification = async (req, userId, type, message) => {
 
         const [newNotification] = await conn.query('SELECT * FROM notifications WHERE id = ?', [newNotificationId]);
 
-        // 4. Emitir via Socket.IO
+        // 4. Emitir via Socket.IO (LÓGICA CORRIGIDA)
         const io = req.app.get('io');
         const getUserSocket = req.app.get('getUserSocket');
-        const userSocketId = getUserSocket(userId);
-
-
-        if (userSocketId && newNotification) {
-            io.to(userSocketId).emit('newNotification', serializeBigInts(newNotification));
-        }
 
         if (!io || !getUserSocket) {
             console.error('[Notification Service] ERRO CRÍTICO: Instância do io ou getUserSocket não encontrada via app.set. Socket não pode ser emitido.');
-            // Não retorna aqui, pois a notificação já foi salva no DB. Apenas loga o erro grave.
-        } else {
-             const userSocketId = getUserSocket(userId); //
+            // A notificação foi salva no DB, mas não pode ser emitida em tempo real.
+            return; 
+        }
 
-             // --- LOGS ADICIONADOS ---
-            console.log(`[Notification Service] Preparando para emitir notificação tipo '${type}' para User ID ${userId}. Socket ID encontrado: ${userSocketId || 'Nenhum (usuário offline?)'}`);
+        const userSocketId = getUserSocket(userId);
 
-            if (userSocketId && newNotification) { //
-                const notificationData = serializeBigInts(newNotification); // Garante serialização
-                io.to(userSocketId).emit('newNotification', notificationData); //
-                console.log(`[Notification Service] Evento 'newNotification' emitido com SUCESSO para socket ${userSocketId}. Dados:`, JSON.stringify(notificationData));
-            } else if (newNotification) {
-                 console.warn(`[Notification Service] Nenhum socket ativo encontrado para User ID ${userId}. Notificação ID ${newNotification.id} salva no DB, mas não enviada em tempo real.`);
-            }
-             // --- FIM LOGS ADICIONADOS ---
+        console.log(`[Notification Service] Preparando para emitir notificação tipo '${type}' para User ID ${userId}. Socket ID encontrado: ${userSocketId || 'Nenhum (usuário offline?)'}`);
+
+        if (userSocketId && newNotification) {
+            // Este é o ÚNICO local que emite o socket
+            const notificationData = serializeBigInts(newNotification);
+            io.to(userSocketId).emit('newNotification', notificationData);
+            console.log(`[Notification Service] Evento 'newNotification' emitido com SUCESSO para socket ${userSocketId}. Dados:`, JSON.stringify(notificationData));
+        
+        } else if (newNotification) {
+            // Se o usuário está offline, apenas logamos
+            console.warn(`[Notification Service] Nenhum socket ativo encontrado para User ID ${userId}. Notificação ID ${newNotification.id} salva no DB, mas não enviada em tempo real.`);
         }
 
     } catch (error) {
