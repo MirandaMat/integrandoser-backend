@@ -25,10 +25,17 @@ router.get('/', protect, async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
-        const notifications = await conn.query(
-            "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 20",
-            [userId]
-        );
+        
+        // --- CORREÇÃO AQUI ---
+        // Trocamos 'LIMIT 20' por um filtro de data de 15 dias
+        const query = `
+            SELECT * FROM notifications 
+            WHERE user_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL 15 DAY) 
+            ORDER BY created_at DESC
+        `;
+        // --- FIM DA CORREÇÃO ---
+
+        const notifications = await conn.query(query, [userId]);
         res.json(serializeBigInts(notifications));
     } catch (error) {
         console.error("Erro ao buscar notificações:", error);
