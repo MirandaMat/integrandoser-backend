@@ -135,10 +135,17 @@ router.get('/scheduled', protect, isAdmin, async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
+        
+        // --- MODIFICADO: Adicionado LEFT JOINs e COALESCE para buscar o telefone ---
         const query = `
-            SELECT ta.id, ta.triagem_id, ta.user_name, ta.triagem_type, ta.meeting_link, aa.start_time 
+            SELECT 
+                ta.id, ta.triagem_id, ta.user_name, ta.triagem_type, ta.meeting_link, aa.start_time,
+                COALESCE(tp.telefone, tpr.telefone, te.telefone) as telefone
             FROM triagem_appointments ta
             JOIN admin_availability aa ON ta.availability_id = aa.id
+            LEFT JOIN triagem_pacientes tp ON ta.triagem_id = tp.id AND ta.triagem_type = 'pacientes'
+            LEFT JOIN triagem_profissionais tpr ON ta.triagem_id = tpr.id AND ta.triagem_type = 'profissionais'
+            LEFT JOIN triagem_empresas te ON ta.triagem_id = te.id AND ta.triagem_type = 'empresas'
             WHERE ta.status = 'Confirmado' AND aa.start_time >= NOW()
             ORDER BY aa.start_time ASC
         `;
@@ -261,10 +268,17 @@ router.get('/pending', protect, isAdmin, async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
+        
+        // --- MODIFICADO: Adicionado LEFT JOINs e COALESCE para buscar o telefone ---
         const appointments = await conn.query(`
-            SELECT ta.id, ta.triagem_id, ta.user_name, ta.user_email, ta.triagem_type, aa.start_time 
+            SELECT 
+                ta.id, ta.triagem_id, ta.user_name, ta.user_email, ta.triagem_type, aa.start_time,
+                COALESCE(tp.telefone, tpr.telefone, te.telefone) as telefone
             FROM triagem_appointments ta
             JOIN admin_availability aa ON ta.availability_id = aa.id
+            LEFT JOIN triagem_pacientes tp ON ta.triagem_id = tp.id AND ta.triagem_type = 'pacientes'
+            LEFT JOIN triagem_profissionais tpr ON ta.triagem_id = tpr.id AND ta.triagem_type = 'profissionais'
+            LEFT JOIN triagem_empresas te ON ta.triagem_id = te.id AND ta.triagem_type = 'empresas'
             WHERE ta.status = 'Pendente'
             ORDER BY aa.start_time ASC
         `);
