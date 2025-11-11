@@ -312,7 +312,7 @@ router.get('/list/:type', protect, isAdmin, async (req, res) => {
 
     try {
         conn = await pool.getConnection();
-        const query = `SELECT id, ${nameColumn} as nome, email, status, created_at FROM ${tableName} ORDER BY created_at DESC`;
+        const query = `SELECT id, ${nameColumn} as nome, email, telefone, status, created_at FROM ${tableName} ORDER BY created_at DESC`;
         const list = await conn.query(query);
         res.json(serializeBigInts(list));
     } catch (error) {
