@@ -147,7 +147,7 @@ router.get('/summary', protect, isAdmin, async (req, res) => {
 });
 
 
-// GET /api/triagem/detail/:type/:id - Busca os detalhes de uma submissão
+// Busca os detalhes de uma submissão, incluindo dados de agendamento se houver
 router.get('/detail/:type/:id', protect, isAdmin, async (req, res) => {
     const { type, id } = req.params;
     let conn;
@@ -162,21 +162,34 @@ router.get('/detail/:type/:id', protect, isAdmin, async (req, res) => {
 
     try {
         conn = await pool.getConnection();
-        const rows = await conn.query(`SELECT * FROM ${tableName} WHERE id = ?`, [id]);
+        
+        // Inclui dados da tabela de agendamentos
+        // Traz start_time e meeting_link se houver um agendamento ativo (não cancelado)
+        const query = `
+            SELECT 
+                t.*,
+                a.id as appointment_id,
+                a.start_time,
+                a.meeting_link,
+                a.status as appointment_status
+            FROM ${tableName} t
+            LEFT JOIN triagem_appointments a 
+                ON t.id = a.triagem_id 
+                AND a.triagem_type = ?
+                AND a.status != 'cancelled' 
+            WHERE t.id = ?
+        `;
+        
+        const rows = await conn.query(query, [type, id]);
         const detail = rows[0]; 
         
         if (!detail) {
             return res.status(404).json({ message: 'Registro não encontrado.' });
         }
         
-        // Lida com campos que podem ser JSON ou texto simples, evitando que a aplicação quebre.
         const parseJsonField = (field) => {
-            try {
-                return field ? JSON.parse(field) : [];
-            } catch (e) {
-                // Se não for um JSON válido, retorna o próprio texto dentro de um array
-                return field ? [field] : [];
-            }
+            try { return field ? JSON.parse(field) : []; } 
+            catch (e) { return field ? [field] : []; }
         };
 
         if (type === 'pacientes') {
@@ -437,6 +450,42 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
         console.error(`Erro ao confirmar triagem de ${type}:`, error);
         // Só envia esta resposta se a transação do banco falhar
         res.status(500).json({ message: 'Erro interno ao confirmar cadastro.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+
+// Busca reuniões confirmadas juntando com os dados do usuário para exibição no painel
+router.get('/scheduled', protect, isAdmin, async (req, res) => {
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        
+        const query = `
+            SELECT 
+                a.id, 
+                a.start_time, 
+                a.meeting_link, 
+                a.triagem_type, 
+                a.triagem_id,
+                a.status,
+                COALESCE(p.nome_completo, pr.nome_completo, e.nome_empresa) as user_name,
+                COALESCE(p.email, pr.email, e.email) as user_email
+            FROM triagem_appointments a
+            LEFT JOIN triagem_pacientes p ON a.triagem_id = p.id AND a.triagem_type = 'pacientes'
+            LEFT JOIN triagem_profissionais pr ON a.triagem_id = pr.id AND a.triagem_type = 'profissionais'
+            LEFT JOIN triagem_empresas e ON a.triagem_id = e.id AND a.triagem_type = 'empresas'
+            WHERE a.status = 'confirmed'
+            ORDER BY a.start_time ASC
+        `;
+
+        const rows = await conn.query(query);
+        res.json(serializeBigInts(rows));
+
+    } catch (error) {
+        console.error("Erro ao buscar reuniões agendadas:", error);
+        res.status(500).json({ message: 'Erro ao buscar reuniões agendadas.' });
     } finally {
         if (conn) conn.release();
     }
