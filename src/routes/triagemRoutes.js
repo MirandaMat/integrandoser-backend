@@ -163,20 +163,22 @@ router.get('/detail/:type/:id', protect, isAdmin, async (req, res) => {
     try {
         conn = await pool.getConnection();
         
-        // Inclui dados da tabela de agendamentos
-        // Traz start_time e meeting_link se houver um agendamento ativo (não cancelado)
+        // QUERY CORRIGIDA:
+        // Faz join com triagem_appointments E availability_slots
         const query = `
             SELECT 
                 t.*,
                 a.id as appointment_id,
-                a.start_time,
+                s.start_time,
                 a.meeting_link,
                 a.status as appointment_status
             FROM ${tableName} t
             LEFT JOIN triagem_appointments a 
                 ON t.id = a.triagem_id 
                 AND a.triagem_type = ?
-                AND a.status != 'cancelled' 
+                AND a.status != 'cancelled'
+            LEFT JOIN availability_slots s
+                ON a.availability_id = s.id
             WHERE t.id = ?
         `;
         
@@ -470,11 +472,10 @@ router.get('/scheduled', protect, isAdmin, async (req, res) => {
     try {
         conn = await pool.getConnection();
         
-        // Busca reuniões confirmadas. O status na tabela triagem_appointments deve ser 'confirmed' (minúsculo)
         const query = `
             SELECT 
                 a.id, 
-                a.start_time, 
+                s.start_time,  
                 a.meeting_link, 
                 a.triagem_type, 
                 a.triagem_id,
@@ -482,14 +483,16 @@ router.get('/scheduled', protect, isAdmin, async (req, res) => {
                 COALESCE(p.nome_completo, pr.nome_completo, e.nome_empresa, 'Usuário Desconhecido') as user_name,
                 COALESCE(p.email, pr.email, e.email) as user_email
             FROM triagem_appointments a
+            JOIN availability_slots s ON a.availability_id = s.id
             LEFT JOIN triagem_pacientes p ON a.triagem_id = p.id AND a.triagem_type = 'pacientes'
             LEFT JOIN triagem_profissionais pr ON a.triagem_id = pr.id AND a.triagem_type = 'profissionais'
             LEFT JOIN triagem_empresas e ON a.triagem_id = e.id AND a.triagem_type = 'empresas'
-            WHERE a.status = 'confirmed'
-            ORDER BY a.start_time ASC
+            WHERE a.status = 'Confirmado' OR a.status = 'confirmed'
+            ORDER BY s.start_time ASC
         `;
 
         const rows = await conn.query(query);
+        // Serializa BigInts para evitar erro no JSON
         res.json(serializeBigInts(rows));
 
     } catch (error) {
