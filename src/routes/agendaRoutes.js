@@ -763,6 +763,47 @@ router.get('/my-dashboard/professional', protect, isProfissional, async (req, re
     }
 });
 
+// Rota para buscar o histórico de agendamentos entre o Profissional logado e um Paciente específico
+router.get('/professional/patient-history/:patientUserId', protect, isProfissional, async (req, res) => {
+    const { userId } = req.user; // ID do profissional (tabela users)
+    const { patientUserId } = req.params; // ID do paciente (tabela users)
+    let conn;
+
+    try {
+        conn = await pool.getConnection();
+
+        // 1. Identifica o ID do Profissional na tabela professionals
+        const [profProfile] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        if (!profProfile) return res.status(404).json({ message: 'Profissional não encontrado.' });
+        
+        // 2. Identifica o ID do Paciente na tabela patients usando o user_id fornecido
+        const [patientProfile] = await conn.query("SELECT id FROM patients WHERE user_id = ?", [patientUserId]);
+        if (!patientProfile) return res.status(404).json({ message: 'Paciente não encontrado.' });
+
+        // 3. Busca todos os agendamentos entre eles
+        const query = `
+            SELECT 
+                a.id, 
+                a.appointment_time, 
+                a.status, 
+                a.session_value,
+                a.package_invoice_id
+            FROM appointments a
+            WHERE a.professional_id = ? AND a.patient_id = ?
+            ORDER BY a.appointment_time DESC
+        `;
+
+        const history = await conn.query(query, [profProfile.id, patientProfile.id]);
+        res.json(serializeBigInts(history));
+
+    } catch (error) {
+        console.error("Erro ao buscar histórico do paciente:", error);
+        res.status(500).json({ message: 'Erro ao buscar histórico.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
 // Rota para buscar agendamentos futuros com status 'Agendada'
 router.get('/future-appointments', protect, async (req, res) => {
     let conn;
