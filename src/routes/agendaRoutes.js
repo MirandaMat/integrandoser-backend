@@ -132,7 +132,7 @@ router.get('/all-appointments', protect, isAdmin, async (req, res) => {
                 CASE
                     WHEN 
                         a.status = 'Agendada' 
-                        AND a.appointment_time < (NOW() - INTERVAL 3 HOUR - INTERVAL 30 MINUTE)
+                        AND a.appointment_time < (NOW() - INTERVAL 3 HOUR - INTERVAL 24 HOUR)
                         AND a.package_invoice_id IS NULL
                     THEN 1
                     ELSE 0
@@ -671,7 +671,7 @@ router.get('/my-appointments/professional', protect, async (req, res) => {
                 CASE
                     WHEN 
                         a.status = 'Agendada' 
-                        AND a.appointment_time < (NOW() - INTERVAL 3 HOUR - INTERVAL 30 MINUTE)
+                        AND a.appointment_time < (NOW() - INTERVAL 3 HOUR - INTERVAL 24 HOUR)
                         AND a.package_invoice_id IS NULL
                     THEN 1
                     ELSE 0
@@ -712,7 +712,7 @@ router.get('/my-dashboard/professional', protect, isProfissional, async (req, re
             SELECT a.id, a.appointment_time, p.nome as patient_name, p.imagem_url as patient_photo
             FROM appointments a
             JOIN patients p ON a.patient_id = p.id
-            WHERE a.professional_id = ? AND a.status = 'Agendada' AND a.appointment_time < NOW() - INTERVAL 30 MINUTE
+            WHERE a.professional_id = ? AND a.status = 'Agendada' AND a.appointment_time < NOW() - INTERVAL 24 HOUR
             ORDER BY a.appointment_time ASC;
         `, [professionalId]);
 
