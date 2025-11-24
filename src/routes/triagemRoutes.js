@@ -291,12 +291,20 @@ router.get('/nao-confirmados', protect, isAdmin, async (req, res) => {
     try {
         conn = await pool.getConnection();
 
-        const pacientes = await conn.query(`SELECT id, nome_completo as nome, email, status, created_at, 'pacientes' as type FROM triagem_pacientes WHERE status COLLATE utf8mb4_general_ci = 'Não confirmado'`);
-        const profissionais = await conn.query(`SELECT id, nome_completo as nome, email, status, created_at, 'profissionais' as type FROM triagem_profissionais WHERE status COLLATE utf8mb4_general_ci = 'Não confirmado'`);
-        const empresas = await conn.query(`SELECT id, nome_empresa as nome, email, status, created_at, 'empresas' as type FROM triagem_empresas WHERE status COLLATE utf8mb4_general_ci = 'Não confirmado'`);
+        // Nota: Removido 'type' fixo nas queries individuais para evitar confusão se o driver retornar metadados
+        // Se o driver retornar [rows], o spread operator funciona.
+        // Se retornar [rows, fields], o 'rows' é o índice 0. O código abaixo assume retorno direto de rows.
+        
+        const pRows = await conn.query(`SELECT id, nome_completo as nome, email, status, created_at, 'pacientes' as type FROM triagem_pacientes WHERE status COLLATE utf8mb4_general_ci = 'Não confirmado'`);
+        const prRows = await conn.query(`SELECT id, nome_completo as nome, email, status, created_at, 'profissionais' as type FROM triagem_profissionais WHERE status COLLATE utf8mb4_general_ci = 'Não confirmado'`);
+        const eRows = await conn.query(`SELECT id, nome_empresa as nome, email, status, created_at, 'empresas' as type FROM triagem_empresas WHERE status COLLATE utf8mb4_general_ci = 'Não confirmado'`);
 
-        // O driver mariadb pode retornar [rows, fields], então pegamos apenas as linhas (índice 0).
-        const combinedList = [...pacientes, ...profissionais, ...empresas];
+        // Garante que estamos lidando com arrays antes de juntar
+        const rowsP = Array.isArray(pRows) ? pRows : [];
+        const rowsPr = Array.isArray(prRows) ? prRows : [];
+        const rowsE = Array.isArray(eRows) ? eRows : [];
+
+        const combinedList = [...rowsP, ...rowsPr, ...rowsE];
         
         combinedList.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
         
@@ -462,6 +470,7 @@ router.get('/scheduled', protect, isAdmin, async (req, res) => {
     try {
         conn = await pool.getConnection();
         
+        // Busca reuniões confirmadas. O status na tabela triagem_appointments deve ser 'confirmed' (minúsculo)
         const query = `
             SELECT 
                 a.id, 
@@ -470,7 +479,7 @@ router.get('/scheduled', protect, isAdmin, async (req, res) => {
                 a.triagem_type, 
                 a.triagem_id,
                 a.status,
-                COALESCE(p.nome_completo, pr.nome_completo, e.nome_empresa) as user_name,
+                COALESCE(p.nome_completo, pr.nome_completo, e.nome_empresa, 'Usuário Desconhecido') as user_name,
                 COALESCE(p.email, pr.email, e.email) as user_email
             FROM triagem_appointments a
             LEFT JOIN triagem_pacientes p ON a.triagem_id = p.id AND a.triagem_type = 'pacientes'
