@@ -1291,11 +1291,6 @@ router.get('/dashboard/admin-stats', protect, isAdmin, async (req, res) => {
 });
 
 
-// ====================================================
-// --- ROTAS PARA A PÁGINA DE CONFIGURAÇÕES ---
-// ====================================================
-
-
 // GET /api/users/settings/payment - Busca as configurações de pagamento do usuário logado
 router.get('/settings/payment', protect, async (req, res) => {
     const { userId, role } = req.user;
@@ -1362,7 +1357,46 @@ router.put('/settings/payment', protect, async (req, res) => {
     }
 });
 
-module.exports = router;
+
+// ROTA PARA ADMIN: Buscar pacientes vinculados a um profissional específico
+router.get('/:userId/linked-patients', protect, isAdmin, async (req, res) => {
+    const targetUserId = req.params.userId;
+    let conn;
+    try {
+        conn = await pool.getConnection();
+
+        // 1. Descobrir o ID do profissional na tabela professionals baseado no user_id
+        const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [targetUserId]);
+        
+        if (!prof) {
+            return res.json([]); // Não é profissional ou não encontrado
+        }
+        const professionalId = prof.id;
+
+        // 2. Buscar pacientes vinculados (mesma lógica do /my-associates)
+        // Vínculo por criação (created_by) ou por agendamento (appointments)
+        const query = `
+            SELECT DISTINCT 
+                p.id, 
+                p.nome, 
+                p.imagem_url
+            FROM patients p
+            LEFT JOIN appointments a ON p.id = a.patient_id
+            WHERE a.professional_id = ? OR p.created_by_professional_id = ?
+            ORDER BY p.nome ASC
+        `;
+
+        const patients = await conn.query(query, [professionalId, professionalId]);
+        res.json(serializeBigInts(patients));
+
+    } catch (error) {
+        console.error("Erro ao buscar pacientes vinculados:", error);
+        res.status(500).json({ message: 'Erro ao buscar pacientes vinculados.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
 
 
 module.exports = router;
