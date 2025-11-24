@@ -163,8 +163,6 @@ router.get('/detail/:type/:id', protect, isAdmin, async (req, res) => {
     try {
         conn = await pool.getConnection();
         
-        // QUERY CORRIGIDA:
-        // Faz join com triagem_appointments E availability_slots
         const query = `
             SELECT 
                 t.*,
@@ -176,8 +174,8 @@ router.get('/detail/:type/:id', protect, isAdmin, async (req, res) => {
             LEFT JOIN triagem_appointments a 
                 ON t.id = a.triagem_id 
                 AND a.triagem_type = ?
-                AND a.status != 'cancelled'
-            LEFT JOIN availability_slots s
+                AND a.status != 'Cancelado'
+            LEFT JOIN admin_availability s
                 ON a.availability_id = s.id
             WHERE t.id = ?
         `;
@@ -472,6 +470,8 @@ router.get('/scheduled', protect, isAdmin, async (req, res) => {
     try {
         conn = await pool.getConnection();
         
+        // CORREÇÃO AQUI: Trocado 'availability_slots' por 'admin_availability'
+        // E ajustado o filtro de status para bater com o ENUM do seu banco ('Confirmado')
         const query = `
             SELECT 
                 a.id, 
@@ -483,16 +483,15 @@ router.get('/scheduled', protect, isAdmin, async (req, res) => {
                 COALESCE(p.nome_completo, pr.nome_completo, e.nome_empresa, 'Usuário Desconhecido') as user_name,
                 COALESCE(p.email, pr.email, e.email) as user_email
             FROM triagem_appointments a
-            JOIN availability_slots s ON a.availability_id = s.id
+            LEFT JOIN admin_availability s ON a.availability_id = s.id
             LEFT JOIN triagem_pacientes p ON a.triagem_id = p.id AND a.triagem_type = 'pacientes'
             LEFT JOIN triagem_profissionais pr ON a.triagem_id = pr.id AND a.triagem_type = 'profissionais'
             LEFT JOIN triagem_empresas e ON a.triagem_id = e.id AND a.triagem_type = 'empresas'
-            WHERE a.status = 'Confirmado' OR a.status = 'confirmed'
+            WHERE a.status = 'Confirmado'
             ORDER BY s.start_time ASC
         `;
 
         const rows = await conn.query(query);
-        // Serializa BigInts para evitar erro no JSON
         res.json(serializeBigInts(rows));
 
     } catch (error) {
