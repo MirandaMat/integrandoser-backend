@@ -1445,6 +1445,7 @@ async function generatePixCharge(invoice) {
 
 
 // ROTA PARA O USUÁRIO PEGAR OS DETALHES DE PAGAMENTO DE UMA FATURA
+/*
 router.get('/invoices/:invoiceId/payment-details', protect, async (req, res) => {
     const { invoiceId } = req.params;
     const userId = req.user.id || req.user.userId;
@@ -1472,8 +1473,44 @@ router.get('/invoices/:invoiceId/payment-details', protect, async (req, res) => 
         if (conn) conn.release();
     }
 });
+*/
+router.get('/invoices/:invoiceId/payment-details', protect, async (req, res) => {
+    const { invoiceId } = req.params;
+    const userId = req.user.id || req.user.userId;
+    let conn;
+    try {
+        conn = await db.getConnection();
+        // ALTERAÇÃO: Permite acesso se for o pagador (user_id) OU o criador (creator_user_id)
+        const [invoice] = await conn.query(
+            "SELECT * FROM invoices WHERE id = ? AND (user_id = ? OR creator_user_id = ?)", 
+            [invoiceId, userId, userId]
+        );
+        
+        if (!invoice) return res.status(404).json({ message: "Fatura não encontrada ou não pertence a você." });
+
+        const sessionsDetails = await conn.query(
+            `SELECT t.transaction_date, t.amount, p.nome as patient_name
+            FROM transactions t
+            LEFT JOIN appointments a ON t.description LIKE CONCAT('%', a.professional_id, '%') AND t.description LIKE CONCAT('%', a.patient_id, '%')
+            LEFT JOIN patients p ON a.patient_id = p.id
+            WHERE t.invoice_id = ? AND t.type = 'commission'`,
+            [invoiceId]
+        );
+
+        const pixDetails = await generatePixCharge(invoice);
+        res.json({ invoice, pixDetails, sessionsDetails });
+    } catch (error) {
+        console.error("Erro ao buscar detalhes da fatura:", error);
+        res.status(500).json({ message: 'Erro ao buscar detalhes da fatura.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+
 
 // ROTA PARA O USUÁRIO ENVIAR O COMPROVANTE
+/*
 router.post('/invoices/:invoiceId/upload-receipt', [protect, upload.single('receipt')], async (req, res) => {
     const { invoiceId } = req.params;
     const userId = req.user.id || req.user.userId;
@@ -1548,6 +1585,99 @@ router.post('/invoices/:invoiceId/upload-receipt', [protect, upload.single('rece
         res.json({
             message: 'Comprovante enviado e fatura marcada como paga!',
             invoice: serializeBigInts(updatedInvoice) // Enviando os dados atualizados
+        });
+
+    } catch (error) {
+        console.error("Erro ao salvar comprovante:", error);
+        res.status(500).json({ message: 'Erro ao salvar comprovante.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+*/
+router.post('/invoices/:invoiceId/upload-receipt', [protect, upload.single('receipt')], async (req, res) => {
+    const { invoiceId } = req.params;
+    const userId = req.user.id || req.user.userId;
+
+    if (!req.file) {
+        console.error(`[RECEIPT UPLOAD] Erro inesperado: Middleware Multer não anexou o arquivo.`);
+        return res.status(500).json({ message: 'Erro ao processar o arquivo antes do upload.' });
+    }
+
+    if (!req.file.gcsUrl) { 
+        console.error(`[RECEIPT UPLOAD] URL GCS não encontrada.`);
+        return res.status(500).json({ message: 'Erro ao fazer upload do comprovante. Tente novamente.' });
+    }
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const receiptUrl = req.file.gcsUrl; 
+
+        // ALTERAÇÃO: Permite update se for o pagador (user_id) OU o criador (creator_user_id)
+        const [result] = await conn.query(
+            "UPDATE invoices SET receipt_url = ?, status = 'paid' WHERE id = ? AND (user_id = ? OR creator_user_id = ?)", 
+            [receiptUrl, invoiceId, userId, userId]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(403).json({ message: 'Permissão negada ou fatura não encontrada.' });
+        }
+
+        const [updatedInvoice] = await conn.query("SELECT * FROM invoices WHERE id = ?", [invoiceId]);
+
+        // Bloco de notificação
+        if (updatedInvoice && updatedInvoice.creator_user_id) {
+            // Se quem fez o upload (userId) for diferente do criador, notifica o criador.
+            // Se for o próprio criador anexando (caso do Profissional anexando pelo Paciente), 
+            // podemos pular a notificação ou notificar o paciente (opcional).
+            if (String(userId) !== String(updatedInvoice.creator_user_id)) {
+                
+                const [uploaderProfile] = await conn.query(`SELECT COALESCE(p.nome, prof.nome, c.nome_empresa, a.nome) as name FROM users u LEFT JOIN patients p ON u.id = p.user_id LEFT JOIN professionals prof ON u.id = prof.user_id LEFT JOIN companies c ON u.id = c.user_id LEFT JOIN administrators a ON u.id = a.user_id WHERE u.id = ?`, [userId]);
+                const uploaderName = uploaderProfile ? uploaderProfile.name : 'Um usuário';
+
+                const [creatorUser] = await conn.query("SELECT r.name as role FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ?", [updatedInvoice.creator_user_id]);
+                const creatorRole = creatorUser ? creatorUser.role.toLowerCase() : 'admin';
+                let notificationUrl = `/${creatorRole}/financeiro`;
+                
+                await createNotification(
+                    req,
+                    updatedInvoice.creator_user_id,
+                    'payment_received',
+                    `${uploaderName} enviou um comprovante para a fatura #${invoiceId}.`,
+                    notificationUrl
+                );
+
+                // Envio de email (mantido conforme lógica original)
+                const [creatorDetails] = await conn.query("SELECT u.email, COALESCE(prof.nome, a.nome) as name FROM users u LEFT JOIN professionals prof ON u.id = prof.user_id LEFT JOIN administrators a ON u.id = a.user_id WHERE u.id = ?", [updatedInvoice.creator_user_id]);
+                if (creatorDetails && creatorDetails.email) {
+                    try {
+                        await sendReceiptUploadNotificationEmail(
+                            creatorDetails.email,
+                            creatorDetails.name || 'Admin',
+                            uploaderName,
+                            invoiceId,
+                            `https://integrandoser.com.br${notificationUrl}`
+                        );
+                    } catch (e) { console.error(e); }
+                }
+            } else {
+                // Caso o PRÓPRIO profissional tenha anexado o comprovante (pelo paciente)
+                // Vamos notificar o paciente que a fatura foi paga/processada
+                 const amountFormatted = parseFloat(updatedInvoice.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+                 await createNotification(
+                    req,
+                    updatedInvoice.user_id, // Paciente
+                    'payment_received',
+                    `Seu comprovante foi anexado pelo profissional. A fatura de ${amountFormatted} está em análise.`,
+                    '/paciente/financeiro'
+                );
+            }
+        }
+
+        res.json({
+            message: 'Comprovante enviado com sucesso!',
+            invoice: serializeBigInts(updatedInvoice)
         });
 
     } catch (error) {
