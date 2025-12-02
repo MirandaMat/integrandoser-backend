@@ -1615,10 +1615,12 @@ router.post('/invoices/:invoiceId/upload-receipt', [protect, upload.single('rece
         const receiptUrl = req.file.gcsUrl; 
 
         // ALTERAÇÃO: Permite update se for o pagador (user_id) OU o criador (creator_user_id)
-        const [result] = await conn.query(
+        const resultRaw = await conn.query(
             "UPDATE invoices SET receipt_url = ?, status = 'paid' WHERE id = ? AND (user_id = ? OR creator_user_id = ?)", 
             [receiptUrl, invoiceId, userId, userId]
         );
+
+        const result = Array.isArray(resultRaw) ? resultRaw[0] : resultRaw;
 
         if (result.affectedRows === 0) {
             return res.status(403).json({ message: 'Permissão negada ou fatura não encontrada.' });
