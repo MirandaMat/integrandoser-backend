@@ -566,7 +566,7 @@ router.get('/invoices/pending-approval', [protect, isAdmin], async (req, res) =>
     }
 });
 
-
+/*
 router.patch('/invoices/:invoiceId/reject', [protect, isAdmin], async (req, res) => {
     const { invoiceId } = req.params;
     let conn; // Adicionado para poder usar o finally
@@ -591,7 +591,54 @@ router.patch('/invoices/:invoiceId/reject', [protect, isAdmin], async (req, res)
         if (conn) conn.release(); // Adicionado para garantir a liberação da conexão
     }
 });
+*/
+router.patch('/invoices/:invoiceId/reject', [protect], async (req, res) => {
+    const { invoiceId } = req.params;
+    const userId = req.user.id || req.user.userId;
+    const userRole = req.user.role; // O middleware protect deve fornecer a role
 
+    let conn;
+    try {
+        conn = await db.getConnection();
+        
+        // 1. Busca a fatura para verificar permissões e pegar o arquivo
+        const [invoice] = await conn.query("SELECT creator_user_id, receipt_url FROM invoices WHERE id = ?", [invoiceId]);
+        
+        if (!invoice) {
+            return res.status(404).json({ message: "Fatura não encontrada." });
+        }
+
+        // 2. Lógica de Permissão:
+        // Permite se for ADMIN OU se o usuário logado for o CRIADOR da fatura (Profissional)
+        const isCreator = String(invoice.creator_user_id) === String(userId);
+        const isAdmin = userRole === 'ADM';
+
+        if (!isAdmin && !isCreator) {
+            return res.status(403).json({ message: "Acesso negado. Apenas o administrador ou o emissor da cobrança podem rejeitá-la." });
+        }
+
+        // 3. Apaga o arquivo físico (se existir)
+        if (invoice.receipt_url) {
+            const filePath = path.join(__dirname, '../../', invoice.receipt_url);
+            fs.unlink(filePath, err => {
+                if (err) console.warn('Aviso: Erro ao apagar arquivo de comprovante antigo:', err);
+            });
+        }
+
+        // 4. Atualiza status no banco
+        await conn.query("UPDATE invoices SET status = 'rejected', receipt_url = NULL WHERE id = ?", [invoiceId]);
+        
+        // (Opcional) Você pode adicionar uma notificação aqui para avisar o paciente que o comprovante foi rejeitado.
+
+        res.json({ message: "Fatura rejeitada e comprovante apagado." });
+
+    } catch (error) {
+        console.error("Erro ao rejeitar fatura:", error);
+        res.status(500).json({ message: "Erro ao rejeitar fatura." });
+    } finally {
+        if (conn) conn.release();
+    }
+});
 
 // All invoices - apenas para Admin
 router.get('/invoices/all', [protect, isAdmin], async (req, res) => {
