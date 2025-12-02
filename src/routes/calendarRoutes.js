@@ -1,7 +1,7 @@
 // server/src/routes/calendarRoutes.js
 const express = require('express');
 const pool = require('../config/db.js');
-const { protect, isAdmin, isProfissional } = require('../middleware/authMiddleware.js'); // Corrigido para isProfissional
+const { protect, isAdmin, isProfissional } = require('../middleware/authMiddleware.js');
 const router = express.Router();
 
 // Função auxiliar (sem alterações)
@@ -27,11 +27,12 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
     try {
         conn = await pool.getConnection();
 
-        // 1. Consultas normais (adicionado 'a.id as original_id')
+        // 1. Consultas normais
+        // Alterado para incluir "com [Nome do Profissional]" no título
         const appointmentsQuery = `
             SELECT 
                 a.id, a.id as original_id,
-                CONCAT('Consulta: ', pat.nome) as title,
+                CONCAT('Consulta: ', pat.nome, ' com ', prof.nome) as title,
                 a.appointment_time as start,
                 a.status,
                 'consulta' as type,
@@ -43,7 +44,7 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
         `;
         const appointments = await conn.query(appointmentsQuery);
 
-        // 2. Agendamentos de triagem (adicionado 'ta.id as original_id')
+        // 2. Agendamentos de triagem
         const screeningAppointmentsQuery = `
             SELECT 
                 CONCAT('triage-', ta.id) as id, ta.id as original_id,
@@ -56,7 +57,7 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
         `;
         const screeningAppointments = await conn.query(screeningAppointmentsQuery);
 
-        // 3. Horários de triagem disponíveis (adicionado 'id as original_id')
+        // 3. Horários de triagem disponíveis
         const availableSlotsQuery = `
             SELECT 
                 CONCAT('slot-', id) as id, id as original_id,
@@ -93,11 +94,12 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
-        // Adicionado 'a.id as original_id'
+        
+        // Alterado para incluir "com [Nome do Profissional]" no título
         const query = `
             SELECT 
                 a.id, a.id as original_id,
-                CONCAT('Consulta: ', p.nome) as title,
+                CONCAT('Consulta: ', p.nome, ' com ', prof.nome) as title,
                 a.appointment_time as start,
                 a.status,
                 'consulta' as type,
