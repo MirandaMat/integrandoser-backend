@@ -174,7 +174,8 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
     }
 });
 
-// GET /api/users/:id - Busca um usuário específico com perfil 
+// GET /api/users/:id - Busca um usuário específico com perfil
+/* 
 router.get('/:id', protect, async (req, res) => {
     const { id } = req.params;
     let conn;
@@ -219,7 +220,51 @@ router.get('/:id', protect, async (req, res) => {
     }
 });
 
+*/
+router.get('/:id', protect, async (req, res) => {
+    const { id } = req.params;
+    let conn;
+    try {
+        conn = await pool.getConnection();
 
+        const users = await conn.query('SELECT id, email, role_id, status FROM users WHERE id = ?', [id]);
+        if (!users || users.length === 0) {
+            return res.status(404).json({ message: 'Usuário não encontrado.' });
+        }
+        const user = users[0];
+        
+        const roles = await conn.query('SELECT name FROM roles WHERE id = ?', [user.role_id]);
+        if (!roles || roles.length === 0) {
+            return res.status(404).json({ message: 'Papel do usuário não encontrado.' });
+        }
+        const role = roles[0];
+        
+        let tableName;
+        switch (role.name) {
+            case 'ADM': tableName = 'administrators'; break;
+            case 'PROFISSIONAL': tableName = 'professionals'; break;
+            case 'PACIENTE': tableName = 'patients'; break;
+            case 'EMPRESA': tableName = 'companies'; break;
+            default: return res.status(400).json({ message: 'Papel inválido.' });
+        }
+
+        // SELECT * garante que 'fixed_fee' venha do banco
+        const profiles = await conn.query(`SELECT * FROM ${tableName} WHERE user_id = ?`, [id]);
+        const profile = profiles.length > 0 ? profiles[0] : {};
+        
+        const fullUser = {
+            ...serializeBigInts(user),
+            role: role.name,
+            profile: serializeBigInts(profile) || {}
+        };
+        res.json(fullUser);
+    } catch (error) {
+        console.error("Erro ao buscar perfil do usuário:", error);
+        res.status(500).json({ message: 'Erro no servidor.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
 
 
 
