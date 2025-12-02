@@ -318,7 +318,7 @@ router.post('/', protect, isAdmin, upload.single('imagem_perfil'), async (req, r
                 break;
             case '2':
                 tableName = 'professionals';
-                fields = ['user_id', 'nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url'];
+                fields = ['user_id', 'nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url', 'fixed_fee'];
                 break;
             case '3':
                 tableName = 'patients';

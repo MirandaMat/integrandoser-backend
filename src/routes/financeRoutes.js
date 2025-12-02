@@ -155,7 +155,7 @@ router.get('/transactions', [protect, isAdmin], async (req, res) => {
     }
 });
 
-
+/*
 router.get('/professionals-revenue', [protect, isAdmin], async (req, res) => {
     try {
         // A query agora busca da nova tabela, somando apenas os itens não faturados
@@ -177,6 +177,39 @@ router.get('/professionals-revenue', [protect, isAdmin], async (req, res) => {
     } catch (error) { //
         console.error('Error fetching revenue by professional:', error); //
         res.status(500).json({ message: 'Erro ao buscar faturamento por profissional.' }); //
+    }
+});
+*/
+router.get('/professionals-revenue', [protect, isAdmin], async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                prof.id as professional_id,
+                prof.nome as professional_name,
+                u.id as user_id,
+                prof.fixed_fee,
+                SUM(a.session_value) as total_gross_revenue,
+                SUM(CASE 
+                    WHEN pat.created_by_professional_id IS NULL OR pat.created_by_professional_id != a.professional_id 
+                    THEN a.session_value 
+                    ELSE 0 
+                END) as commissionable_revenue
+            FROM appointments a
+            JOIN professionals prof ON a.professional_id = prof.id
+            JOIN users u ON prof.user_id = u.id
+            JOIN patients pat ON a.patient_id = pat.id
+            WHERE a.status = 'Concluída' 
+            -- Opcional: Adicionar filtro de data para o mês atual se desejar
+            AND MONTH(a.appointment_time) = MONTH(CURDATE())
+            AND YEAR(a.appointment_time) = YEAR(CURDATE())
+            GROUP BY prof.id, prof.nome, u.id, prof.fixed_fee
+            ORDER BY total_gross_revenue DESC;
+        `;
+        const revenueByProfessional = await db.query(query);
+        res.json(serializeBigInts(revenueByProfessional));
+    } catch (error) {
+        console.error('Error fetching revenue by professional:', error);
+        res.status(500).json({ message: 'Erro ao buscar faturamento por profissional.' });
     }
 });
 
@@ -703,7 +736,7 @@ router.get('/report/transactions', [protect, isAdmin], async (req, res) => {
         res.status(500).json({ message: 'Erro ao gerar relatório.' });
     }
 });
-
+/*
 router.post('/generate-commissions-for-all', [protect, isAdmin], async (req, res) => {
     const commissionRate = 0.25; 
     const { month, year } = req.body; 
@@ -767,7 +800,105 @@ router.post('/generate-commissions-for-all', [protect, isAdmin], async (req, res
         if (conn) conn.release();
     }
 });
+*/
 
+
+router.post('/generate-commissions-for-all', [protect, isAdmin], async (req, res) => {
+    const commissionRate = 0.25; // 25% sobre pacientes da plataforma
+    const { month, year } = req.body; 
+
+    if (!month || !year) {
+        return res.status(400).json({ message: 'Mês e ano são obrigatórios.' });
+    }
+    
+    let conn;
+    try {
+        conn = await db.getConnection();
+        await conn.beginTransaction();
+
+        // Query atualizada:
+        // 1. Agrupa por profissional.
+        // 2. Soma session_value APENAS se o paciente NÃO foi criado pelo profissional (pat.created_by_professional_id != a.professional_id).
+        // 3. Traz a taxa fixa (fixed_fee) do profissional.
+        const billingData = await conn.query(
+            `SELECT 
+                a.professional_id, 
+                prof.user_id,
+                prof.fixed_fee,
+                SUM(CASE 
+                    WHEN pat.created_by_professional_id IS NULL OR pat.created_by_professional_id != a.professional_id 
+                    THEN a.session_value 
+                    ELSE 0 
+                END) as commissionable_revenue,
+                GROUP_CONCAT(a.id) as session_ids
+             FROM appointments a
+             JOIN professionals prof ON a.professional_id = prof.id
+             JOIN patients pat ON a.patient_id = pat.id
+             WHERE a.status = 'Concluída' 
+             AND a.session_value IS NOT NULL
+             AND MONTH(a.appointment_time) = ?
+             AND YEAR(a.appointment_time) = ?
+             GROUP BY a.professional_id, prof.user_id, prof.fixed_fee`,
+            [month, year]
+        );
+
+        if (billingData.length === 0) {
+            await conn.rollback();
+            return res.status(200).json({ message: 'Nenhuma sessão concluída encontrada para este período.' });
+        }
+
+        let invoicesGenerated = 0;
+
+        for (const prof of billingData) {
+            const commissionableRevenue = parseFloat(prof.commissionable_revenue || 0);
+            const fixedFee = parseFloat(prof.fixed_fee || 0);
+            
+            // Calcula o valor da comissão sobre a receita tributável
+            const commissionValue = commissionableRevenue * commissionRate;
+            
+            // Valor total da fatura = Comissão + Taxa Fixa
+            const totalInvoiceAmount = commissionValue + fixedFee;
+
+            // Só gera fatura se houver valor a cobrar
+            if (totalInvoiceAmount > 0) {
+                const dueDate = new Date(year, month, 10); // Vence dia 10 do mês seguinte (JS month é 0-indexado na Date, mas 1-based no input, ajuste conforme sua logica de front)
+                
+                // Cria descrição detalhada
+                let descriptionParts = [];
+                if (commissionValue > 0) {
+                    descriptionParts.push(`Comissão (${(commissionRate * 100)}%) sobre R$ ${commissionableRevenue.toFixed(2)} de sessões da plataforma`);
+                }
+                if (fixedFee > 0) {
+                    descriptionParts.push(`Taxa Administrativa Mensal (R$ ${fixedFee.toFixed(2)})`);
+                }
+                const description = `Fatura ref. ${month}/${year}: ` + descriptionParts.join(' + ');
+
+                const invoiceResult = await conn.query(
+                    'INSERT INTO invoices (user_id, amount, due_date, description, status) VALUES (?, ?, ?, ?, ?)',
+                    [prof.user_id, totalInvoiceAmount, dueDate, description, 'pending']
+                );
+                const invoiceId = invoiceResult.insertId;
+
+                await conn.query(
+                    "INSERT INTO transactions (invoice_id, user_id, amount, type, description) VALUES (?, ?, ?, ?, ?)",
+                    [invoiceId, prof.user_id, totalInvoiceAmount, 'commission', description]
+                );
+                
+                invoicesGenerated++;
+            }
+        }
+
+        await conn.commit();
+        res.status(201).json({ message: `Processo concluído. ${invoicesGenerated} faturas de comissão/taxa geradas.` });
+
+    } catch (error) {
+        if (conn) await conn.rollback();
+        console.error('Erro ao gerar faturas de comissão:', error);
+        res.status(500).json({ message: 'Erro ao gerar faturas.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
 
 // ===============================================
 // --- ROTAS DO PROFISSIONAL ---
@@ -1710,6 +1841,7 @@ router.get('/professional/monthly-net-revenue', [protect, isProfissional], async
 
 
 // ROTA PARA BUSCAR DETALHES DE FATURAMENTO DE UM PROFISSIONAL ESPECÍFICO
+/*
 router.get('/professional-billing-details/:professionalId', [protect, isAdmin], async (req, res) => {
     const { professionalId } = req.params;
 
@@ -1761,6 +1893,70 @@ router.get('/professional-billing-details/:professionalId', [protect, isAdmin], 
         res.status(500).json({ message: 'Erro ao buscar detalhes de faturamento.' });
     }
 });
+*/
+router.get('/professional-billing-details/:professionalId', [protect, isAdmin], async (req, res) => {
+    const { professionalId } = req.params;
+
+    try {
+        const [professionalDetails] = await db.query(
+            `SELECT p.id, p.nome, p.fixed_fee, u.id as user_id 
+             FROM professionals p
+             JOIN users u ON p.user_id = u.id
+             WHERE p.id = ?`,
+            [professionalId]
+        );
+
+        if (!professionalDetails) {
+            return res.status(404).json({ message: 'Profissional não encontrado.' });
+        }
+
+        // Busca itens pendentes de faturamento (usando professional_billings se ela estiver sincronizada,
+        // mas aqui faremos via appointments para refletir a regra lógica do "criado por")
+        const billingItems = await db.query(
+            `SELECT 
+                a.id as appointment_id,
+                a.appointment_time as billing_date,
+                a.session_value as gross_value,
+                p.nome as patient_name,
+                CASE 
+                    WHEN p.created_by_professional_id = ? THEN 1 
+                    ELSE 0 
+                END as is_exempt
+             FROM appointments a
+             JOIN patients p ON a.patient_id = p.id
+             WHERE a.professional_id = ? 
+             AND a.status = 'Concluída'
+             -- Aqui idealmente filtramos apenas os que AINDA NÃO FORAM FATURADOS (sem invoice vinculada)
+             -- Se você usar a tabela professional_billings, altere a query para lá.
+             AND NOT EXISTS (
+                 SELECT 1 FROM professional_billings pb 
+                 WHERE pb.appointment_id = a.id AND pb.status = 'invoiced'
+             )
+             ORDER BY a.appointment_time ASC`,
+            [professionalId, professionalId]
+        );
+
+        // Calcula os totais
+        const summary = billingItems.reduce((acc, item) => {
+            acc.totalGross += parseFloat(item.gross_value);
+            if (item.is_exempt === 0) {
+                acc.totalCommissionable += parseFloat(item.gross_value);
+            }
+            return acc;
+        }, { totalGross: 0, totalCommissionable: 0 });
+
+        res.json(serializeBigInts({
+            professional: professionalDetails,
+            billingItems,
+            summary
+        }));
+
+    } catch (error) {
+        console.error("Erro ao buscar detalhes de faturamento do profissional:", error);
+        res.status(500).json({ message: 'Erro ao buscar detalhes de faturamento.' });
+    }
+});
+
 
 // ROTA PARA A EMPRESA BUSCAR O CONSUMO ANUAL
 router.get('/company/annual-consumption', [protect, isEmpresa], async (req, res) => {
