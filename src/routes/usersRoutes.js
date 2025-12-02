@@ -289,7 +289,7 @@ router.get('/patient-profile/:patientId', protect, isProfissional, async (req, r
         if (conn) conn.release();
     }
 });
-
+/*
 // POST /api/users - Rota para CRIAR um novo usuário com perfil COMPLETO
 router.post('/', protect, isAdmin, upload.single('imagem_perfil'), async (req, res) => {
     const { email, password, role_id } = req.body;
@@ -395,8 +395,106 @@ router.post('/', protect, isAdmin, upload.single('imagem_perfil'), async (req, r
         if (conn) conn.release();
     }
 });
+*/
+// POST /api/users - Rota para CRIAR um novo usuário com perfil COMPLETO
+router.post('/', protect, isAdmin, upload.single('imagem_perfil'), async (req, res) => {
+    const { email, password, role_id } = req.body;
+    const profileData = JSON.parse(req.body.profileData || '{}');
 
-// PUT /api/users/:id - Atualiza um usuário com perfil COMPLETO
+    if (!email || !password || !role_id || !profileData) {
+        return res.status(400).json({ message: 'Dados insuficientes.' });
+    }
+
+    if (req.file && req.file.gcsUrl) { 
+        profileData.imagem_url = req.file.gcsUrl; 
+    } else if (req.file) {
+        console.warn(`[USER UPDATE] Arquivo ${req.file.originalname} recebido, mas URL GCS não encontrada.`);
+    }
+
+    if (profileData.data_nascimento && typeof profileData.data_nascimento === 'string') {
+        const date = new Date(profileData.data_nascimento);
+        if (!isNaN(date.getTime())) {
+            profileData.data_nascimento = date.toISOString().split('T')[0];
+        } else {
+            profileData.data_nascimento = null;
+        }
+    } else {
+        profileData.data_nascimento = null;
+    }
+
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        const existingUser = await conn.query("SELECT id FROM users WHERE email = ?", [email]);
+        if (existingUser.length > 0) {
+            return res.status(409).json({ message: 'Este email já está em uso.' });
+        }
+
+        await conn.beginTransaction();
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+        const userResult = await conn.query(
+            'INSERT INTO users (email, password, role_id) VALUES (?, ?, ?)',
+            [email, hashedPassword, role_id]
+        );
+        
+        let newUserId;
+        if (Array.isArray(userResult) && userResult[0]) {
+            newUserId = userResult[0].insertId;
+        } else if (userResult && userResult.insertId) {
+            newUserId = userResult.insertId;
+        }
+
+        if (!newUserId) {
+            console.error("Estrutura inesperada do resultado do INSERT:", userResult);
+            throw new Error("Não foi possível obter o ID do novo usuário após a inserção.");
+        }
+
+        profileData.user_id = newUserId;
+
+        let tableName, fields;
+        switch (String(role_id)) {
+            case '1':
+                tableName = 'administrators';
+                fields = ['user_id', 'nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'telefone', 'email', 'endereco', 'profissao', 'imagem_url'];
+                break;
+            case '2':
+                tableName = 'professionals';
+                // CORREÇÃO: 'fixed_fee' adicionado na lista de campos permitidos
+                fields = ['user_id', 'nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url', 'fixed_fee'];
+                break;
+            case '3':
+                tableName = 'patients';
+                fields = ['user_id', 'nome', 'cpf', 'telefone', 'profissao', 'renda', 'preferencia_gen_atend', 'data_nascimento', 'genero', 'endereco', 'cidade', 'tipo_atendimento', 'modalidade_atendimento', 'imagem_url'];
+                break;
+            case '4':
+                tableName = 'companies';
+                fields = ['user_id', 'nome_empresa', 'cnpj', 'num_colaboradores', 'nome_responsavel', 'cargo', 'telefone', 'email_contato', 'descricao', 'tipo_atendimento', 'frequencia', 'expectativa', 'imagem_url'];
+                break;
+            default:
+                throw new Error('Papel inválido');
+        }
+
+        const values = fields.map(field => profileData[field] || null);
+        const placeholders = fields.map(() => '?').join(',');
+        await conn.query(`INSERT INTO ${tableName} (${fields.join(',')}) VALUES (${placeholders})`, values);
+
+        await conn.commit();
+        
+        await createNotification(req, newUserId, 'profile_update', 'Sua conta foi criada com sucesso! Configure seu perfil.');
+        
+        res.status(201).json({ id: String(newUserId), email, role_id });
+    } catch (error) {
+        if (conn) await conn.rollback();
+        console.error("Erro ao criar usuário:", error);
+        res.status(500).json({ message: 'Erro ao criar usuário.', error: error.message });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+// PUT /api/users/:id - Atualiza um usuário com perfil 
+/*
 router.put('/:id', protect, isAdmin, upload.single('imagem_perfil'), async (req, res) => {
     const { email, role_id, profileData: profileDataJSON } = req.body;
     const profileData = JSON.parse(profileDataJSON || '{}');
@@ -491,6 +589,92 @@ router.put('/:id', protect, isAdmin, upload.single('imagem_perfil'), async (req,
         if (conn) conn.release();
     }
 });
+*/
+// PUT /api/users/:id - Atualiza um usuário com perfil
+router.put('/:id', protect, isAdmin, upload.single('imagem_perfil'), async (req, res) => {
+    const { email, role_id, profileData: profileDataJSON } = req.body;
+    const profileData = JSON.parse(profileDataJSON || '{}');
+    const { id } = req.params;
+
+    if (!email || !role_id) {
+        return res.status(400).json({ message: 'Email e Categoria de Usuário são obrigatórios.' });
+    }
+
+    if (req.file && req.file.gcsUrl) { 
+        profileData.imagem_url = req.file.gcsUrl; 
+    } else if (req.file) {
+        console.warn(`[USER CREATE] Arquivo ${req.file.originalname} recebido, mas URL GCS não encontrada.`);
+    }
+
+    if (profileData.data_nascimento && typeof profileData.data_nascimento === 'string') {
+        const date = new Date(profileData.data_nascimento);
+        if (!isNaN(date.getTime())) {
+            profileData.data_nascimento = date.toISOString().split('T')[0];
+        } else {
+            profileData.data_nascimento = null;
+        }
+    } else {
+        profileData.data_nascimento = null;
+    }
+
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        await conn.beginTransaction();
+
+        if (req.body.password) {
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(req.body.password, salt);
+            await conn.query('UPDATE users SET email = ?, role_id = ?, password = ? WHERE id = ?', [email, role_id, hashedPassword, id]);
+        } else {
+            await conn.query('UPDATE users SET email = ?, role_id = ? WHERE id = ?', [email, role_id, id]);
+        }
+        
+        const roleResult = await conn.query('SELECT name FROM roles WHERE id = ?', [req.body.role_id]);
+        const role = roleResult[0].name;
+        
+        let tableName, allFields;
+        switch (role) {
+            case 'ADM':
+                tableName = 'administrators';
+                allFields = ['nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'telefone', 'email', 'endereco', 'profissao', 'imagem_url'];
+                break;
+            case 'PROFISSIONAL':
+                tableName = 'professionals';
+                // CORREÇÃO: 'fixed_fee' adicionado na lista de campos permitidos para atualização
+                allFields = ['nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url', 'fixed_fee'];
+                break;
+            case 'PACIENTE':
+                tableName = 'patients';
+                allFields = ['nome', 'cpf', 'telefone', 'profissao', 'imagem_url', 'renda', 'preferencia_gen_atend', 'data_nascimento', 'genero', 'endereco', 'cidade', 'tipo_atendimento', 'modalidade_atendimento'];
+                break;
+            case 'EMPRESA':
+                tableName = 'companies'; 
+                allFields = ['nome_empresa', 'cnpj', 'num_colaboradores', 'nome_responsavel', 'cargo', 'telefone', 'email_contato', 'descricao', 'tipo_atendimento', 'frequencia', 'expectativa', 'imagem_url'];
+                break;
+            default: throw new Error('Papel inválido');
+        }
+
+        const fieldsToUpdate = allFields.filter(field => profileData[field] !== undefined);
+        
+        if (fieldsToUpdate.length > 0) {
+            const setClause = fieldsToUpdate.map(field => `${field} = ?`).join(', ');
+            const values = fieldsToUpdate.map(field => profileData[field]);
+            await conn.query(`UPDATE ${tableName} SET ${setClause} WHERE user_id = ?`, [...values, id]);
+        }
+        
+        await conn.commit();
+        res.json({ message: 'Usuário atualizado com sucesso!' });
+
+    } catch (error) {
+        if (conn) await conn.rollback();
+        console.error("Erro ao atualizar usuário:", error);
+        res.status(500).json({ message: 'Erro ao atualizar usuário.', error: error.message });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
 
 // DELETE /api/users/:id
 router.delete('/:id', protect, isAdmin, async (req, res) => {
