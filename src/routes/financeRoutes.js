@@ -1033,6 +1033,7 @@ router.get('/professional/invoices-summary', [protect, isProfissional], async (r
 });
 
 // Rota para o profissional buscar as faturas que ele criou
+/*
 router.get('/professional/created-invoices', [protect, isProfissional], async (req, res) => {
     const creatorUserId = req.user.id || req.user.userId;
     try {
@@ -1077,6 +1078,37 @@ router.get('/professional/created-invoices', [protect, isProfissional], async (r
         `;
         
         const invoices = await db.query(query, [creatorUserId, creatorUserId]);
+        res.json(serializeBigInts(invoices)); 
+    } catch (error) {
+        console.error("Erro ao buscar faturas criadas pelo profissional:", error);
+        res.status(500).json({ message: 'Erro ao buscar cobranças enviadas.' });
+    }
+});
+*/
+router.get('/professional/created-invoices', [protect, isProfissional], async (req, res) => {
+    const creatorUserId = req.user.id || req.user.userId;
+    try {
+        // Trazemos tudo ordenado por data de criação.
+        // O Front-end se encarregará de filtrar por Ano/Mês nas abas.
+        const query = `
+            SELECT
+                i.id,
+                i.amount,
+                i.due_date,
+                i.description,
+                i.status,
+                i.receipt_url,
+                i.created_at,
+                COALESCE(p.nome, c.nome_empresa, u.email) as recipient_name
+            FROM invoices i
+            JOIN users u ON i.user_id = u.id
+            LEFT JOIN patients p ON u.id = p.user_id
+            LEFT JOIN companies c ON u.id = c.user_id
+            WHERE i.creator_user_id = ?
+            ORDER BY i.created_at DESC
+        `;
+        
+        const invoices = await db.query(query, [creatorUserId]);
         res.json(serializeBigInts(invoices)); 
     } catch (error) {
         console.error("Erro ao buscar faturas criadas pelo profissional:", error);
