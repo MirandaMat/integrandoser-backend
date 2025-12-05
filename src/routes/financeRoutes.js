@@ -960,8 +960,9 @@ router.get('/professional/billing-history', [protect, isProfissional], async (re
             return res.status(404).json({ message: 'Perfil profissional não encontrado.' });
         }
 
-        // LÓGICA HÍBRIDA: Traz todos os pendentes + os 30 últimos históricos
-        // Usamos UNION para juntar as duas listas sem duplicar registros
+        // LÓGICA AJUSTADA: 
+        // 1. Traz SEMPRE o que é pendente ou 'paid' (aguardando aprovação)
+        // 2. Traz o histórico dos 30 últimos (para ver concluídos/rejeitados recentes)
         const query = `
             (SELECT
                 pb.id, 
@@ -975,7 +976,7 @@ router.get('/professional/billing-history', [protect, isProfissional], async (re
              JOIN patients p ON a.patient_id = p.id
              LEFT JOIN invoices i ON pb.invoice_id = i.id
              WHERE pb.professional_id = ? 
-             AND (i.status = 'pending' OR i.status IS NULL)) -- Garante que pendentes apareçam sempre
+             AND (i.status IN ('pending', 'paid') OR i.status IS NULL)) -- Garante Pendentes E Pagos (Aguardando)
 
             UNION
 
@@ -992,7 +993,7 @@ router.get('/professional/billing-history', [protect, isProfissional], async (re
              LEFT JOIN invoices i ON pb.invoice_id = i.id
              WHERE pb.professional_id = ? 
              ORDER BY pb.billing_date DESC
-             LIMIT 30) -- Garante os 30 mais recentes
+             LIMIT 30) -- Garante histórico recente
 
             ORDER BY billing_date DESC
         `;
@@ -1005,11 +1006,13 @@ router.get('/professional/billing-history', [protect, isProfissional], async (re
     }
 });
 
+
+
 // Rota para o profissional buscar as faturas que ele criou
 router.get('/professional/created-invoices', [protect, isProfissional], async (req, res) => {
     const creatorUserId = req.user.id || req.user.userId;
     try {
-        // LÓGICA HÍBRIDA: Traz todos os pendentes + os 30 últimos históricos
+        // LÓGICA AJUSTADA: Mesma regra (Pending + Paid sempre visíveis)
         const query = `
             (SELECT
                 i.id,
@@ -1024,7 +1027,8 @@ router.get('/professional/created-invoices', [protect, isProfissional], async (r
             JOIN users u ON i.user_id = u.id
             LEFT JOIN patients p ON u.id = p.user_id
             LEFT JOIN companies c ON u.id = c.user_id
-            WHERE i.creator_user_id = ? AND i.status = 'pending') -- Parte 1: Todos os pendentes
+            WHERE i.creator_user_id = ? 
+            AND i.status IN ('pending', 'paid')) -- Garante Pendentes E Pagos (Aguardando)
 
             UNION
 
@@ -1043,12 +1047,11 @@ router.get('/professional/created-invoices', [protect, isProfissional], async (r
             LEFT JOIN companies c ON u.id = c.user_id
             WHERE i.creator_user_id = ?
             ORDER BY i.created_at DESC
-            LIMIT 30) -- Parte 2: Os 30 mais recentes
+            LIMIT 30) -- Garante histórico recente
 
             ORDER BY created_at DESC
         `;
         
-        // Passamos creatorUserId duas vezes (uma para cada parte do UNION)
         const invoices = await db.query(query, [creatorUserId, creatorUserId]);
         res.json(serializeBigInts(invoices)); 
     } catch (error) {
