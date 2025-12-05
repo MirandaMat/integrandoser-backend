@@ -973,8 +973,7 @@ router.get('/professional/billing-history', [protect, isProfissional], async (re
              JOIN patients p ON a.patient_id = p.id
              LEFT JOIN invoices i ON pb.invoice_id = i.id
              WHERE pb.professional_id = ? AND pb.status = 'invoiced'
-             ORDER BY pb.billing_date DESC
-             LIMIT 30`,
+             ORDER BY pb.billing_date DESC`,
             [profProfile.id]
         );
         res.json(serializeBigInts(billingHistory));
@@ -988,6 +987,7 @@ router.get('/professional/billing-history', [protect, isProfissional], async (re
 router.get('/professional/created-invoices', [protect, isProfissional], async (req, res) => {
     const creatorUserId = req.user.id || req.user.userId;
     try {
+        // Garante que busca TODAS as faturas criadas, sem LIMIT
         const query = `
             SELECT
                 i.id,
@@ -1005,7 +1005,7 @@ router.get('/professional/created-invoices', [protect, isProfissional], async (r
             ORDER BY i.created_at DESC
         `;
         const invoices = await db.query(query, [creatorUserId]);
-        res.json(serializeBigInts(invoices)); // Use the existing helper to handle BigInts
+        res.json(serializeBigInts(invoices)); 
     } catch (error) {
         console.error("Erro ao buscar faturas criadas pelo profissional:", error);
         res.status(500).json({ message: 'Erro ao buscar cobranças enviadas.' });
@@ -1043,12 +1043,12 @@ router.get('/professional/invoices', [protect, isProfissional], async (req, res)
 router.get('/professional/transaction-history', [protect, isProfissional], async (req, res) => {
     const userId = req.user.id || req.user.userId;
     try {
+        // REMOVIDO: LIMIT 30
         const rows = await db.query(
             `SELECT id, amount as value, transaction_date as date, type, description, status
              FROM transactions
              WHERE user_id = ? AND type IN ('payment', 'commission') AND status = 'completed'
-             ORDER BY transaction_date DESC
-             LIMIT 30`,
+             ORDER BY transaction_date DESC`,
             [userId]
         );
         res.json(rows);
