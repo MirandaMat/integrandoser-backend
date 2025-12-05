@@ -1006,7 +1006,31 @@ router.get('/professional/billing-history', [protect, isProfissional], async (re
     }
 });
 
-
+router.get('/professional/invoices-summary', [protect, isProfissional], async (req, res) => {
+    const userId = req.user.id || req.user.userId;
+    try {
+        const query = `
+            SELECT 
+                YEAR(created_at) as year,
+                MONTH(created_at) as month,
+                status,
+                COUNT(id) as count,
+                SUM(amount) as total_amount
+            FROM invoices
+            WHERE creator_user_id = ?
+            GROUP BY YEAR(created_at), MONTH(created_at), status
+            ORDER BY year DESC, month DESC, total_amount DESC
+        `;
+        
+        const summary = await db.query(query, [userId]);
+        
+        // Retornamos os dados brutos agrupados, o frontend fará a hierarquia visual
+        res.json(serializeBigInts(summary));
+    } catch (error) {
+        console.error("Erro ao buscar resumo de cobranças:", error);
+        res.status(500).json({ message: 'Erro ao buscar resumo anual.' });
+    }
+});
 
 // Rota para o profissional buscar as faturas que ele criou
 router.get('/professional/created-invoices', [protect, isProfissional], async (req, res) => {
