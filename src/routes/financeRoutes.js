@@ -960,8 +960,10 @@ router.get('/professional/billing-history', [protect, isProfissional], async (re
             return res.status(404).json({ message: 'Perfil profissional não encontrado.' });
         }
 
-        const billingHistory = await db.query(
-            `SELECT
+        // LÓGICA HÍBRIDA: Traz todos os pendentes + os 30 últimos históricos
+        // Usamos UNION para juntar as duas listas sem duplicar registros
+        const query = `
+            (SELECT
                 pb.id, 
                 pb.billing_date, 
                 pb.gross_value, 
@@ -972,10 +974,30 @@ router.get('/professional/billing-history', [protect, isProfissional], async (re
              JOIN appointments a ON pb.appointment_id = a.id
              JOIN patients p ON a.patient_id = p.id
              LEFT JOIN invoices i ON pb.invoice_id = i.id
-             WHERE pb.professional_id = ? AND pb.status = 'invoiced'
-             ORDER BY pb.billing_date DESC`,
-            [profProfile.id]
-        );
+             WHERE pb.professional_id = ? 
+             AND (i.status = 'pending' OR i.status IS NULL)) -- Garante que pendentes apareçam sempre
+
+            UNION
+
+            (SELECT
+                pb.id, 
+                pb.billing_date, 
+                pb.gross_value, 
+                pb.commission_value,
+                p.nome as patient_name,
+                i.status as invoice_status
+             FROM professional_billings pb
+             JOIN appointments a ON pb.appointment_id = a.id
+             JOIN patients p ON a.patient_id = p.id
+             LEFT JOIN invoices i ON pb.invoice_id = i.id
+             WHERE pb.professional_id = ? 
+             ORDER BY pb.billing_date DESC
+             LIMIT 30) -- Garante os 30 mais recentes
+
+            ORDER BY billing_date DESC
+        `;
+
+        const billingHistory = await db.query(query, [profProfile.id, profProfile.id]);
         res.json(serializeBigInts(billingHistory));
     } catch (error) {
         console.error("Erro ao buscar histórico de faturamento:", error);
@@ -987,15 +1009,33 @@ router.get('/professional/billing-history', [protect, isProfissional], async (re
 router.get('/professional/created-invoices', [protect, isProfissional], async (req, res) => {
     const creatorUserId = req.user.id || req.user.userId;
     try {
-        // Garante que busca TODAS as faturas criadas, sem LIMIT
+        // LÓGICA HÍBRIDA: Traz todos os pendentes + os 30 últimos históricos
         const query = `
-            SELECT
+            (SELECT
                 i.id,
                 i.amount,
                 i.due_date,
                 i.description,
                 i.status,
                 i.receipt_url,
+                i.created_at,
+                COALESCE(p.nome, c.nome_empresa, u.email) as recipient_name
+            FROM invoices i
+            JOIN users u ON i.user_id = u.id
+            LEFT JOIN patients p ON u.id = p.user_id
+            LEFT JOIN companies c ON u.id = c.user_id
+            WHERE i.creator_user_id = ? AND i.status = 'pending') -- Parte 1: Todos os pendentes
+
+            UNION
+
+            (SELECT
+                i.id,
+                i.amount,
+                i.due_date,
+                i.description,
+                i.status,
+                i.receipt_url,
+                i.created_at,
                 COALESCE(p.nome, c.nome_empresa, u.email) as recipient_name
             FROM invoices i
             JOIN users u ON i.user_id = u.id
@@ -1003,8 +1043,13 @@ router.get('/professional/created-invoices', [protect, isProfissional], async (r
             LEFT JOIN companies c ON u.id = c.user_id
             WHERE i.creator_user_id = ?
             ORDER BY i.created_at DESC
+            LIMIT 30) -- Parte 2: Os 30 mais recentes
+
+            ORDER BY created_at DESC
         `;
-        const invoices = await db.query(query, [creatorUserId]);
+        
+        // Passamos creatorUserId duas vezes (uma para cada parte do UNION)
+        const invoices = await db.query(query, [creatorUserId, creatorUserId]);
         res.json(serializeBigInts(invoices)); 
     } catch (error) {
         console.error("Erro ao buscar faturas criadas pelo profissional:", error);
@@ -1043,12 +1088,13 @@ router.get('/professional/invoices', [protect, isProfissional], async (req, res)
 router.get('/professional/transaction-history', [protect, isProfissional], async (req, res) => {
     const userId = req.user.id || req.user.userId;
     try {
-        // REMOVIDO: LIMIT 30
+        // Transações são sempre 'completed', então aqui mantemos apenas o LIMIT 30 para performance
         const rows = await db.query(
             `SELECT id, amount as value, transaction_date as date, type, description, status
              FROM transactions
              WHERE user_id = ? AND type IN ('payment', 'commission') AND status = 'completed'
-             ORDER BY transaction_date DESC`,
+             ORDER BY transaction_date DESC
+             LIMIT 30`,
             [userId]
         );
         res.json(rows);
