@@ -1427,7 +1427,7 @@ router.get('/professional/history-statement/download', [protect, isProfissional]
                 // Prepara a tabela do mês
                 const monthInvoices = grouped[year][month];
                 const table = {
-                    headers: ['Data Criação', 'Destinatário', 'Status', 'Valor'],
+                    headers: ['Data Criação', 'Paciente', 'Status', 'Valor'],
                     rows: monthInvoices.map(inv => [
                         new Date(inv.created_at).toLocaleDateString('pt-BR'),
                         inv.recipient_name,
@@ -2053,7 +2053,7 @@ router.get('/invoices/:invoiceId/download', [protect], async (req, res) => {
             doc.font('Helvetica-Bold').fontSize(16).text('FATURA DE SERVIÇOS', { align: 'center' }).moveDown(2);
             doc.fontSize(10);
             doc.font('Helvetica-Bold').text('PRESTADOR:', { continued: true }).font('Helvetica').text(` ${invoice.creator_name}`);
-            doc.font('Helvetica-Bold').text('DESTINATÁRIO:', { continued: true }).font('Helvetica').text(` ${invoice.payer_name}`);
+            doc.font('Helvetica-Bold').text('PACIENTE:', { continued: true }).font('Helvetica').text(` ${invoice.payer_name}`);
             doc.font('Helvetica-Bold').text('VENCIMENTO:', { continued: true }).font('Helvetica').text(` ${new Date(invoice.due_date).toLocaleDateString('pt-BR')}`);
             doc.font('Helvetica-Bold').text('FATURA Nº:', { continued: true }).font('Helvetica').text(` ${invoice.id}`);
             doc.moveDown(2);
