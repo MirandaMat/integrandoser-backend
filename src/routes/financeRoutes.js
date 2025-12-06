@@ -162,6 +162,166 @@ router.get('/invoices/history', [protect, isAdmin], async (req, res) => {
 });
 
 
+router.get('/admin/monthly-closing-history', [protect, isAdmin], async (req, res) => {
+    try {
+        // Esta query busca as Faturas geradas para profissionais e cruza com dados de produção (Agendamentos)
+        // A lógica assume que a fatura foi criada no mês referente ou no mês seguinte. 
+        // Aqui usamos a data da fatura como âncora para o Ano/Mês.
+        const query = `
+            SELECT
+                YEAR(i.created_at) as year,
+                MONTH(i.created_at) as month,
+                prof.nome as professional_name,
+                i.id as invoice_id,
+                i.amount as invoice_amount, -- Valor da comissão/taxa cobrada
+                i.status as invoice_status,
+                i.description,
+                
+                -- Subquery para calcular o Faturamento Bruto do Profissional naquele Mês/Ano da fatura
+                (SELECT COALESCE(SUM(a.session_value), 0) 
+                 FROM appointments a 
+                 WHERE a.professional_id = prof.id 
+                 AND a.status = 'Concluída'
+                 AND MONTH(a.appointment_time) = MONTH(i.created_at)
+                 AND YEAR(a.appointment_time) = YEAR(i.created_at)
+                ) as gross_revenue,
+
+                -- Subquery para contar pacientes únicos atendidos naquele mês
+                (SELECT COUNT(DISTINCT a.patient_id) 
+                 FROM appointments a 
+                 WHERE a.professional_id = prof.id 
+                 AND a.status = 'Concluída'
+                 AND MONTH(a.appointment_time) = MONTH(i.created_at)
+                 AND YEAR(a.appointment_time) = YEAR(i.created_at)
+                ) as patient_count
+
+            FROM invoices i
+            JOIN users u ON i.user_id = u.id
+            JOIN professionals prof ON u.id = prof.user_id
+            -- Filtramos apenas faturas relevantes (exclui canceladas se desejar)
+            WHERE i.status IN ('pending', 'paid', 'completed', 'overdue', 'rejected')
+            ORDER BY year DESC, month DESC, professional_name ASC
+        `;
+
+        const history = await db.query(query);
+        res.json(serializeBigInts(history));
+    } catch (error) {
+        console.error("Erro ao buscar histórico consolidado do admin:", error);
+        res.status(500).json({ message: 'Erro ao buscar histórico.' });
+    }
+});
+
+
+router.get('/admin/history-report/download', [protect, isAdmin], async (req, res) => {
+    let conn;
+    try {
+        conn = await db.getConnection();
+
+        // Reutilizamos a lógica da query acima para garantir consistência
+        const query = `
+            SELECT
+                YEAR(i.created_at) as year,
+                MONTH(i.created_at) as month,
+                prof.nome as professional_name,
+                i.amount as invoice_amount,
+                i.status as invoice_status,
+                i.description,
+                (SELECT COALESCE(SUM(a.session_value), 0) 
+                 FROM appointments a 
+                 WHERE a.professional_id = prof.id 
+                 AND a.status = 'Concluída'
+                 AND MONTH(a.appointment_time) = MONTH(i.created_at)
+                 AND YEAR(a.appointment_time) = YEAR(i.created_at)
+                ) as gross_revenue,
+                (SELECT COUNT(DISTINCT a.patient_id) 
+                 FROM appointments a 
+                 WHERE a.professional_id = prof.id 
+                 AND a.status = 'Concluída'
+                 AND MONTH(a.appointment_time) = MONTH(i.created_at)
+                 AND YEAR(a.appointment_time) = YEAR(i.created_at)
+                ) as patient_count
+            FROM invoices i
+            JOIN users u ON i.user_id = u.id
+            JOIN professionals prof ON u.id = prof.user_id
+            ORDER BY year DESC, month DESC, professional_name ASC
+        `;
+
+        const rows = await conn.query(query);
+
+        // Agrupamento por Ano > Mês
+        const grouped = {};
+        rows.forEach(row => {
+            const { year, month } = row;
+            if (!grouped[year]) grouped[year] = {};
+            if (!grouped[year][month]) grouped[year][month] = [];
+            grouped[year][month].push(row);
+        });
+
+        // Geração do PDF
+        const doc = new PDFDocument({ size: 'A4', margin: 40, autoFirstPage: true });
+        const filename = `relatorio_historico_admin_${new Date().toISOString().split('T')[0]}.pdf`;
+
+        res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Type', 'application/pdf');
+        doc.pipe(res);
+
+        doc.fontSize(18).text('Relatório Financeiro Consolidado (Admin)', { align: 'center' }).moveDown();
+        doc.fontSize(10).text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, { align: 'center' }).moveDown(2);
+
+        const years = Object.keys(grouped).sort((a, b) => b - a);
+
+        for (const year of years) {
+            // Cabeçalho do Ano
+            if (doc.y > doc.page.height - 100) doc.addPage();
+            doc.rect(40, doc.y, 515, 25).fill('#e5e7eb');
+            doc.fillColor('black').font('Helvetica-Bold').fontSize(14).text(`Ano: ${year}`, 50, doc.y - 18);
+            doc.moveDown(1.5);
+
+            const months = Object.keys(grouped[year]).sort((a, b) => b - a);
+
+            for (const month of months) {
+                const monthName = new Date(year, month - 1).toLocaleString('pt-BR', { month: 'long' });
+                const capitalizedMonth = monthName.charAt(0).toUpperCase() + monthName.slice(1);
+
+                if (doc.y > doc.page.height - 100) doc.addPage();
+                
+                doc.font('Helvetica-Bold').fontSize(12).fillColor('#4f46e5').text(`${capitalizedMonth}`);
+                doc.fillColor('black').moveDown(0.5);
+
+                const items = grouped[year][month];
+                
+                const table = {
+                    headers: ['Profissional', 'Faturado (Bruto)', 'Comissão (Plat.)', 'Pacientes', 'Status'],
+                    rows: items.map(item => [
+                        item.professional_name,
+                        formatCurrency(item.gross_revenue), // Faturamento Total do Profissional
+                        formatCurrency(item.invoice_amount), // Quanto a plataforma cobrou
+                        item.patient_count.toString(),
+                        item.invoice_status === 'paid' ? 'Aguardando' : 
+                        item.invoice_status === 'completed' ? 'Pago' : 
+                        item.invoice_status === 'pending' ? 'Pendente' : item.invoice_status
+                    ])
+                };
+
+                // Desenha tabela
+                let nextY = drawTableWithPagination(doc, table, 40, doc.y, [160, 100, 100, 60, 80]);
+                doc.y = nextY;
+                doc.moveDown(1.5);
+            }
+            doc.moveDown(1);
+        }
+        
+        doc.end();
+
+    } catch (error) {
+        console.error("Erro ao gerar relatório admin:", error);
+        res.status(500).json({ message: 'Erro ao gerar PDF.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+
 // ENCONTRE esta rota e substitua pela versão corrigida abaixo:
 
 router.get('/transactions', [protect, isAdmin], async (req, res) => {
