@@ -126,6 +126,42 @@ router.get('/monthly-commissions', [protect, isAdmin], async (req, res) => {
 });
 
 
+// Rota para ADMIN buscar Histórico Completo de Faturas (Arquivo)
+// Traz faturas com status finalizados ou antigos para consulta
+router.get('/invoices/history', [protect, isAdmin], async (req, res) => {
+    try {
+        const query = `
+            SELECT
+                i.id,
+                i.user_id,
+                i.amount,
+                i.due_date,
+                i.created_at, -- Importante para o filtro de Ano/Mês
+                i.description,
+                i.status,
+                i.receipt_url,
+                COALESCE(p.nome, prof.nome, c.nome_empresa, u.email) as user_name,
+                r.name as user_role
+            FROM invoices i
+            JOIN users u ON i.user_id = u.id
+            LEFT JOIN roles r ON u.role_id = r.id
+            LEFT JOIN patients p ON u.id = p.user_id
+            LEFT JOIN professionals prof ON u.id = prof.user_id
+            LEFT JOIN companies c ON u.id = c.user_id
+            -- Opcional: Se quiser filtrar apenas profissionais, descomente a linha abaixo
+            -- WHERE r.name = 'PROFISSIONAL'
+            ORDER BY i.created_at DESC
+        `;
+        
+        const invoices = await db.query(query);
+        res.json(serializeBigInts(invoices));
+    } catch (error) {
+        console.error("Erro ao buscar histórico de faturas do admin:", error);
+        res.status(500).json({ message: 'Erro ao buscar histórico.' });
+    }
+});
+
+
 // ENCONTRE esta rota e substitua pela versão corrigida abaixo:
 
 router.get('/transactions', [protect, isAdmin], async (req, res) => {
