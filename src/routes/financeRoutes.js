@@ -47,6 +47,7 @@ const serializeBigInts = (data) => {
 
 
 
+
 // ===============================================
 // --- ROTAS DO ADMIN ---
 // As rotas do admin são protegidas pelos middlewares 'protect' e 'isAdmin'.
@@ -1216,11 +1217,9 @@ router.get('/professional/statement/download', [protect, isProfissional], async 
         conn = await db.getConnection();
 
         const [professional] = await conn.query("SELECT nome FROM professionals WHERE user_id = ?", [userId]);
-        if (!professional) {
-            return res.status(404).json({ message: 'Perfil do profissional não encontrado.' });
-        }
+        if (!professional) return res.status(404).json({ message: 'Perfil não encontrado.' });
 
-        // 1. BUSCAR TRANSAÇÕES CONCLUÍDAS DO MÊS ATUAL (LÓGICA EXISTENTE)
+        // Buscas de dados (Mantidas da sua versão original)
         const completedTransactions = await conn.query(
             `SELECT transaction_date as date, description, type, amount as value
              FROM transactions
@@ -1229,7 +1228,6 @@ router.get('/professional/statement/download', [protect, isProfissional], async 
             [userId, firstDayOfMonth, lastDayOfMonth]
         );
 
-        // 2. BUSCAR COBRANÇAS A RECEBER (QUE O PROFISSIONAL CRIOU E ESTÃO PENDENTES)
         const pendingIncome = await conn.query(
             `SELECT i.due_date as date, i.description, i.amount as value, COALESCE(p.nome, c.nome_empresa) as recipient_name
              FROM invoices i
@@ -1240,7 +1238,6 @@ router.get('/professional/statement/download', [protect, isProfissional], async 
             [userId]
         );
 
-        // 3. BUSCAR COMISSÕES A PAGAR (QUE O PROFISSIONAL RECEBEU E ESTÃO PENDENTES)
         const pendingDebts = await conn.query(
             `SELECT due_date as date, description, amount as value
              FROM invoices
@@ -1248,70 +1245,54 @@ router.get('/professional/statement/download', [protect, isProfissional], async 
             [userId]
         );
 
-        // --- INÍCIO DA GERAÇÃO DO PDF ---
-        const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        // --- GERAÇÃO DO PDF ---
+        const doc = new PDFDocument({ size: 'A4', margin: 40, autoFirstPage: true });
         const filename = `extrato_${professional.nome.replace(/\s+/g, '_')}_${currentMonth}-${currentYear}.pdf`;
+        
         res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
         res.setHeader('Content-Type', 'application/pdf');
         doc.pipe(res);
 
         // Cabeçalho
         doc.fontSize(16).text(`Extrato Financeiro - ${professional.nome}`, { align: 'center' }).moveDown();
-        doc.fontSize(12).text(`Período de Referência: ${firstDayOfMonth.toLocaleDateString('pt-BR')} a ${lastDayOfMonth.toLocaleDateString('pt-BR')}`, { align: 'center' }).moveDown(2);
+        doc.fontSize(12).text(`Referência: ${firstDayOfMonth.toLocaleDateString('pt-BR')} a ${lastDayOfMonth.toLocaleDateString('pt-BR')}`, { align: 'center' }).moveDown(2);
 
-        // Seção de Resumo (baseado apenas em transações concluídas)
-        doc.fontSize(14).text('Resumo do Mês (Transações Concluídas)', { underline: true }).moveDown();
-        
+        // Resumo
+        doc.fontSize(14).text('Resumo do Mês', { underline: true }).moveDown();
         const totalPayments = completedTransactions.filter(t => t.type === 'payment').reduce((sum, t) => sum + parseFloat(t.value || 0), 0);
         const totalCommissions = completedTransactions.filter(t => t.type === 'commission').reduce((sum, t) => sum + parseFloat(t.value || 0), 0);
         const netRevenue = totalPayments - totalCommissions;
 
-        doc.font('Helvetica-Bold').fontSize(10).text('Total Recebido (Concluído): ').font('Helvetica').text(formatCurrency(totalPayments)).moveDown(0.5);
-        doc.font('Helvetica-Bold').text('Total Descontado (Comissões Pagas): ').font('Helvetica').text(formatCurrency(totalCommissions)).moveDown(0.5);
-        doc.font('Helvetica-Bold').fontSize(12).text('Resultado Líquido do Mês: ').font('Helvetica').text(formatCurrency(netRevenue)).moveDown(2);
+        doc.font('Helvetica-Bold').fontSize(10).text('Total Recebido: ').font('Helvetica').text(formatCurrency(totalPayments));
+        doc.font('Helvetica-Bold').text('Comissões Pagas: ').font('Helvetica').text(formatCurrency(totalCommissions));
+        doc.font('Helvetica-Bold').fontSize(12).text('Líquido: ').font('Helvetica').text(formatCurrency(netRevenue)).moveDown(2);
 
-        // --- NOVA SEÇÃO: PENDÊNCIAS FINANCEIRAS ---
-        doc.fontSize(14).text('Pendências Financeiras (Em Aberto)', { underline: true }).moveDown();
-
-        // Tabela de Cobranças A Receber
+        // Pendências (Valores a Receber)
         if (pendingIncome.length > 0) {
-            doc.font('Helvetica-Bold').fontSize(11).text('Valores a Receber:').moveDown(0.5);
-            const incomeTable = {
+            doc.addPage(); // Quebra forçada para organizar melhor, ou pode remover se preferir
+            doc.font('Helvetica-Bold').fontSize(14).text('Valores a Receber (Em Aberto)', { underline: true }).moveDown();
+            
+            const table = {
                 headers: ['Vencimento', 'Destinatário', 'Descrição', 'Valor'],
                 rows: pendingIncome.map(i => [
                     new Date(i.date).toLocaleDateString('pt-BR'),
-                    i.recipient_name,
+                    i.recipient_name || 'Desconhecido',
                     i.description,
                     formatCurrency(i.value)
                 ])
             };
-            drawTable(doc, incomeTable, 40, doc.y, [80, 130, 200, 80]);
+            // Usa a nova função com paginação
+            drawTableWithPagination(doc, table, 40, doc.y, [70, 130, 250, 70]);
             doc.moveDown(2);
         }
 
-        // Tabela de Comissões A Pagar
-        if (pendingDebts.length > 0) {
-            doc.font('Helvetica-Bold').fontSize(11).text('Comissões a Pagar:').moveDown(0.5);
-            const debtTable = {
-                headers: ['Vencimento', 'Descrição', 'Valor'],
-                rows: pendingDebts.map(i => [
-                    new Date(i.date).toLocaleDateString('pt-BR'),
-                    i.description,
-                    formatCurrency(-Math.abs(i.value)) // Valor negativo
-                ])
-            };
-            drawTable(doc, debtTable, 40, doc.y, [80, 310, 100]);
-            doc.moveDown(2);
-        }
-        
-        if (pendingIncome.length === 0 && pendingDebts.length === 0) {
-            doc.font('Helvetica').fontSize(10).text('Nenhuma pendência financeira encontrada.').moveDown(2);
-        }
-
-        // Seção de Transações Concluídas
+        // Histórico de Transações
         if (completedTransactions.length > 0) {
-            doc.fontSize(14).text('Detalhes das Transações Concluídas no Mês', { underline: true }).moveDown();
-            const transactionsTable = {
+            if (doc.y > doc.page.height - 100) doc.addPage(); // Verifica se precisa de nova página pro título
+            
+            doc.font('Helvetica-Bold').fontSize(14).text('Histórico de Transações', { underline: true }).moveDown();
+            
+            const table = {
                 headers: ['Data', 'Descrição', 'Tipo', 'Valor'],
                 rows: completedTransactions.map(t => [
                     new Date(t.date).toLocaleDateString('pt-BR'),
@@ -1320,16 +1301,14 @@ router.get('/professional/statement/download', [protect, isProfissional], async 
                     formatCurrency(t.type === 'commission' ? -Math.abs(t.value) : t.value)
                 ])
             };
-            drawTable(doc, transactionsTable, 40, doc.y, [80, 250, 80, 80]);
-        } else {
-            doc.fontSize(10).text('Nenhuma transação concluída encontrada para este período.');
+            drawTableWithPagination(doc, table, 40, doc.y, [70, 280, 100, 70]);
         }
-        
+
         doc.end();
 
     } catch (error) {
-        console.error("Erro ao gerar extrato do profissional:", error);
-        res.status(500).json({ message: 'Erro interno ao gerar extrato.' });
+        console.error("Erro no extrato mensal:", error);
+        res.status(500).json({ message: 'Erro ao gerar extrato.' });
     } finally {
         if (conn) conn.release();
     }
@@ -1362,6 +1341,174 @@ const drawTable = (doc, table, x, y) => {
         });
         startY += rowHeight;
     });
+};
+
+// DOWNLOAD DO HISTÓRICO COMPLETO (ANO/MÊS)
+router.get('/professional/history-statement/download', [protect, isProfissional], async (req, res) => {
+    const userId = req.user.id || req.user.userId;
+    
+    let conn;
+    try {
+        conn = await db.getConnection();
+
+        // 1. Busca dados do profissional
+        const [professional] = await conn.query("SELECT nome FROM professionals WHERE user_id = ?", [userId]);
+        if (!professional) return res.status(404).json({ message: 'Profissional não encontrado.' });
+
+        // 2. Busca TODAS as faturas criadas pelo profissional (Histórico completo)
+        const query = `
+            SELECT
+                i.id,
+                i.amount,
+                i.due_date,
+                i.created_at,
+                i.description,
+                i.status,
+                COALESCE(p.nome, c.nome_empresa, u.email) as recipient_name
+            FROM invoices i
+            JOIN users u ON i.user_id = u.id
+            LEFT JOIN patients p ON u.id = p.user_id
+            LEFT JOIN companies c ON u.id = c.user_id
+            WHERE i.creator_user_id = ?
+            ORDER BY i.created_at DESC
+        `;
+        const invoices = await conn.query(query, [userId]);
+
+        // 3. Agrupa por Ano e Mês
+        const grouped = {};
+        invoices.forEach(inv => {
+            const date = new Date(inv.created_at);
+            const year = date.getFullYear();
+            const month = date.getMonth() + 1; // 1-12
+
+            if (!grouped[year]) grouped[year] = {};
+            if (!grouped[year][month]) grouped[year][month] = [];
+            grouped[year][month].push(inv);
+        });
+
+        // 4. Gera o PDF
+        const doc = new PDFDocument({ size: 'A4', margin: 40, autoFirstPage: true });
+        const filename = `historico_completo_${professional.nome.replace(/\s+/g, '_')}.pdf`;
+
+        res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Type', 'application/pdf');
+        doc.pipe(res);
+
+        doc.fontSize(18).text('Histórico Completo de Cobranças', { align: 'center' }).moveDown();
+        doc.fontSize(12).text(`Profissional: ${professional.nome}`, { align: 'center' });
+        doc.fontSize(10).text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, { align: 'center' }).moveDown(2);
+
+        // Itera sobre os Anos (Decrescente)
+        const years = Object.keys(grouped).sort((a, b) => b - a);
+
+        for (const year of years) {
+            // Título do Ano
+            if (doc.y > doc.page.height - 100) doc.addPage();
+            
+            doc.rect(40, doc.y, 515, 25).fill('#f3f4f6'); // Fundo cinza suave
+            doc.fillColor('black').font('Helvetica-Bold').fontSize(14)
+               .text(`Ano: ${year}`, 50, doc.y - 18); // Ajuste fino do texto dentro do rect
+            doc.moveDown(1.5);
+
+            // Itera sobre os Meses (Decrescente)
+            const months = Object.keys(grouped[year]).sort((a, b) => b - a);
+
+            for (const month of months) {
+                // Nome do mês
+                const monthName = new Date(year, month - 1).toLocaleString('pt-BR', { month: 'long' });
+                const capitalizedMonth = monthName.charAt(0).toUpperCase() + monthName.slice(1);
+                
+                if (doc.y > doc.page.height - 80) doc.addPage();
+
+                doc.font('Helvetica-Bold').fontSize(12).fillColor('#4f46e5') // Cor primária (Indigo)
+                   .text(`${capitalizedMonth} / ${year}`);
+                doc.fillColor('black').moveDown(0.5);
+
+                // Prepara a tabela do mês
+                const monthInvoices = grouped[year][month];
+                const table = {
+                    headers: ['Data Criação', 'Destinatário', 'Status', 'Valor'],
+                    rows: monthInvoices.map(inv => [
+                        new Date(inv.created_at).toLocaleDateString('pt-BR'),
+                        inv.recipient_name,
+                        // Traduz status
+                        inv.status === 'paid' ? 'Aguardando' : 
+                        inv.status === 'pending' ? 'Pendente' : 
+                        inv.status === 'completed' ? 'Pago' : 
+                        inv.status === 'overdue' ? 'Vencido' : inv.status,
+                        formatCurrency(inv.amount)
+                    ])
+                };
+
+                // Desenha a tabela com paginação
+                // Retorna o Y atualizado para o próximo mês não desenhar em cima
+                let nextY = drawTableWithPagination(doc, table, 40, doc.y, [90, 250, 100, 75]);
+                
+                // Atualiza o Y do documento e adiciona espaço
+                doc.y = nextY; 
+                doc.moveDown(1.5);
+            }
+            doc.moveDown(1); // Espaço extra entre anos
+        }
+
+        doc.end();
+
+    } catch (error) {
+        console.error("Erro ao gerar histórico completo:", error);
+        res.status(500).json({ message: 'Erro ao gerar arquivo de histórico.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+
+const drawTableWithPagination = (doc, table, x, startY, colWidths) => {
+    let currentY = startY;
+    const rowHeight = 25;
+    const cellPadding = 5;
+    const bottomMargin = 50; // Margem inferior segura
+
+    // Função interna para desenhar cabeçalho
+    const drawHeaders = (yPos) => {
+        doc.font('Helvetica-Bold').fontSize(10);
+        let localX = x;
+        table.headers.forEach((header, i) => {
+            doc.text(header, localX, yPos + cellPadding, { width: colWidths[i], align: 'left' });
+            localX += colWidths[i];
+        });
+        // Linha abaixo do header
+        doc.moveTo(x, yPos + rowHeight).lineTo(x + colWidths.reduce((a, b) => a + b, 0), yPos + rowHeight).stroke();
+        return yPos + rowHeight;
+    };
+
+    // Desenha o cabeçalho inicial
+    currentY = drawHeaders(currentY);
+
+    doc.font('Helvetica').fontSize(10);
+
+    // Itera sobre as linhas
+    table.rows.forEach(row => {
+        // Verifica se cabe na página
+        if (currentY + rowHeight > doc.page.height - bottomMargin) {
+            doc.addPage(); // Nova página
+            currentY = 50; // Reinicia Y no topo (margem superior)
+            currentY = drawHeaders(currentY); // Redesenha cabeçalho
+            doc.font('Helvetica').fontSize(10); // Garante fonte normal
+        }
+
+        let localX = x;
+        row.forEach((cell, i) => {
+            doc.text(cell, localX, currentY + cellPadding, { width: colWidths[i], align: 'left' });
+            localX += colWidths[i];
+        });
+        
+        // Opcional: Linha sutil entre linhas
+        // doc.moveTo(x, currentY + rowHeight).lineTo(x + colWidths.reduce((a, b) => a + b, 0), currentY + rowHeight).opacity(0.1).stroke().opacity(1);
+
+        currentY += rowHeight;
+    });
+
+    return currentY; // Retorna a posição Y final para continuar escrevendo depois da tabela
 };
 
 
