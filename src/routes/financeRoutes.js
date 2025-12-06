@@ -1273,7 +1273,7 @@ router.get('/professional/statement/download', [protect, isProfissional], async 
             doc.font('Helvetica-Bold').fontSize(14).text('Valores a Receber (Em Aberto)', { underline: true }).moveDown();
             
             const table = {
-                headers: ['Vencimento', 'Destinatário', 'Descrição', 'Valor'],
+                headers: ['Vencimento', 'Paciente', 'Descrição', 'Valor'],
                 rows: pendingIncome.map(i => [
                     new Date(i.date).toLocaleDateString('pt-BR'),
                     i.recipient_name || 'Desconhecido',
