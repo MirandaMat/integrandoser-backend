@@ -1,8 +1,9 @@
 // server/src/routes/schedulingRoutes.js
 const express = require('express');
 const pool = require('../config/db.js');
-const { protect, isAdmin } = require('../middleware/authMiddleware.js');
-const { sendSchedulingEmail, sendConfirmationEmail, sendUpdateEmail } = require('../config/mailer.js');
+//const { protect, isAdmin } = require('../middleware/authMiddleware.js');
+const { protect, isAdmin, isProfissional } = require('../middleware/authMiddleware.js');
+const { sendSchedulingEmail, sendConfirmationEmail, sendUpdateEmail, sendAppointmentReminder } = require('../config/mailer.js');
 const { createNotification } = require('../services/notificationService.js');
 const router = express.Router();
 
@@ -423,6 +424,139 @@ router.patch('/appointments/:id/reschedule', protect, isAdmin, async (req, res) 
         if (conn) await conn.rollback();
         console.error("Erro ao reagendar:", error);
         res.status(500).json({ message: 'Erro ao reagendar.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+// ==========================================
+// --- ROTAS DE DISPONIBILIDADE DO PROFISSIONAL ---
+// ==========================================
+
+// 1. Definir/Adicionar disponibilidade
+router.post('/professional/availability', protect, isProfissional, async (req, res) => {
+    const { slots } = req.body;
+    const { userId } = req.user;
+
+    if (!slots || !Array.isArray(slots)) return res.status(400).json({ message: 'Dados inválidos.' });
+
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        // Get Professional ID
+        const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        if (!prof) return res.status(404).json({ message: 'Profissional não encontrado.' });
+
+        await conn.beginTransaction();
+        for (const slot of slots) {
+            await conn.query(
+                'INSERT INTO professional_availability (professional_id, start_time, end_time) VALUES (?, ?, ?)', 
+                [prof.id, new Date(slot.start_time), new Date(slot.end_time)]
+            );
+        }
+        await conn.commit();
+        res.status(201).json({ message: 'Horários salvos com sucesso!' });
+    } catch (error) {
+        if (conn) await conn.rollback();
+        console.error(error);
+        res.status(500).json({ message: 'Erro ao salvar horários.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+// 2. Buscar disponibilidade (Para o próprio profissional gerenciar)
+router.get('/professional/availability/me', protect, isProfissional, async (req, res) => {
+    const { userId } = req.user;
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        
+        // Clean old unused slots
+        await conn.query("DELETE FROM professional_availability WHERE professional_id = ? AND is_booked = FALSE AND start_time < NOW() - INTERVAL 1 DAY", [prof.id]);
+
+        const slots = await conn.query(
+            "SELECT id, start_time, end_time, is_booked FROM professional_availability WHERE professional_id = ? ORDER BY start_time ASC",
+            [prof.id]
+        );
+        res.json(serializeBigInts(slots));
+    } catch (error) {
+        res.status(500).json({ message: 'Erro ao buscar horários.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+// 3. Deletar disponibilidade
+router.delete('/professional/availability/:id', protect, isProfissional, async (req, res) => {
+    const { id } = req.params;
+    const { userId } = req.user;
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        
+        // Ensure the slot belongs to this professional
+        const result = await conn.query(
+            "DELETE FROM professional_availability WHERE id = ? AND professional_id = ? AND is_booked = FALSE",
+            [id, prof.id]
+        );
+
+        if (result.affectedRows === 0) return res.status(400).json({ message: 'Horário não encontrado ou já agendado.' });
+        res.json({ message: 'Horário removido.' });
+    } catch (error) {
+        res.status(500).json({ message: 'Erro ao remover horário.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+// ==========================================
+// --- ROTAS PÚBLICAS (CONFIRMAÇÃO/REAGENDAMENTO) ---
+// ==========================================
+
+// Confirmar via Token (Link do Email/WhatsApp)
+router.post('/appointments/confirm/:token', async (req, res) => {
+    const { token } = req.params;
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        const result = await conn.query(
+            "UPDATE appointments SET is_confirmed = TRUE, confirmation_token = NULL WHERE confirmation_token = ?",
+            [token]
+        );
+
+        if (result.affectedRows === 0) return res.status(400).json({ message: 'Link inválido ou expirado.' });
+        
+        res.json({ message: 'Presença confirmada com sucesso!' });
+    } catch (error) {
+        res.status(500).json({ message: 'Erro ao confirmar.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+// Buscar slots disponíveis para reagendamento (baseado no Token)
+router.get('/appointments/reschedule-options/:token', async (req, res) => {
+    const { token } = req.params;
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        
+        // 1. Find the appointment via token
+        const [app] = await conn.query("SELECT id, professional_id FROM appointments WHERE confirmation_token = ?", [token]);
+        if (!app) return res.status(404).json({ message: 'Link inválido.' });
+
+        // 2. Find available slots for that professional
+        const slots = await conn.query(
+            "SELECT id, start_time FROM professional_availability WHERE professional_id = ? AND is_booked = FALSE AND start_time > NOW() ORDER BY start_time ASC",
+            [app.professional_id]
+        );
+
+        res.json(serializeBigInts(slots));
+    } catch (error) {
+        res.status(500).json({ message: 'Erro ao buscar horários.' });
     } finally {
         if (conn) conn.release();
     }

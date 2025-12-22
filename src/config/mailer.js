@@ -1,6 +1,6 @@
 // server/src/config/mailer.js
-// const nodemailer = require('nodemailer'); // <--- Removido Nodemailer
-const { Resend } = require('resend'); // <--- Importado Resend
+// const nodemailer = require('nodemailer'); // 
+const { Resend } = require('resend'); //
 
 // Inicialize o Resend com a chave de API do ambiente
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -15,7 +15,6 @@ if (!fromEmail) {
     console.warn("[Mailer Config - Resend] AVISO: EMAIL_FROM_ADDRESS não está definida. Certifique-se de usar um domínio verificado no Resend.");
 }
 
-// --- Funções de Envio Adaptadas para Resend ---
 
 const sendWelcomeEmail = async (to, tempPassword) => {
     const subject = 'Bem-vindo(a) ao IntegrandoSer! Complete seu cadastro.';
@@ -98,7 +97,7 @@ const sendConfirmationEmail = async (to, name, appointmentTime, meetingLink) => 
         dateStyle: 'full',
         timeStyle: 'short'
     });
-    const subject = '✅ Agendamento Confirmado - Entrevista Terapia Para Todos';
+    const subject = 'Agendamento Confirmado - Entrevista Terapia Para Todos';
     const html = `
         <div style="font-family: Arial, sans-serif; line-height: 1.6;">
             <h2>Olá, ${name}!</h2>
@@ -138,7 +137,7 @@ const sendUpdateEmail = async (to, name, appointmentTime, meetingLink) => {
         dateStyle: 'full',
         timeStyle: 'short'
     });
-    const subject = '❗️ Atualização sobre seu Agendamento - Terapia Para Todos';
+    const subject = 'Atualização sobre seu Agendamento - Terapia Para Todos';
     const html = `
         <div style="font-family: Arial, sans-serif; line-height: 1.6;">
             <h2>Olá, ${name}!</h2>
@@ -175,7 +174,7 @@ const sendUpdateEmail = async (to, name, appointmentTime, meetingLink) => {
 
 const sendInvoiceNotificationEmail = async (recipientEmail, recipientName, creatorName, amount, dueDate, invoiceId, paymentLink) => {
     const formattedAmount = parseFloat(amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-    // Corrigido: Assegura que dueDate é um objeto Date antes de formatar
+    //  Assegura que dueDate é um objeto Date antes de formatar
     const formattedDate = dueDate instanceof Date ? dueDate.toLocaleDateString('pt-BR') : new Date(dueDate).toLocaleDateString('pt-BR');
     const subject = `Nova Cobrança Recebida - Fatura #${invoiceId}`;
     const html = `
@@ -279,13 +278,63 @@ const sendPasswordResetEmail = async (to, tempPassword) => {
     }
 };
 
+
+const sendAppointmentReminder = async (to, name, appointmentTime, confirmLink, rescheduleLink) => {
+    const formattedTime = new Date(appointmentTime).toLocaleString('pt-BR', {
+        dateStyle: 'full',
+        timeStyle: 'short'
+    });
+
+    const subject = 'Lembrete de Consulta - Confirmação Necessária';
+    
+    const html = `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <h2>Olá, ${name}!</h2>
+            <p>Este é um lembrete da sua consulta agendada para amanhã:</p>
+            <p><strong>${formattedTime}</strong></p>
+            
+            <p>Por favor, confirme sua presença ou reagende se necessário:</p>
+            
+            <div style="margin: 20px 0;">
+                <a href="${confirmLink}" style="background-color: #10B981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin-right: 10px;">
+                    Confirmar Presença
+                </a>
+                
+                <a href="${rescheduleLink}" style="background-color: #F59E0B; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px;">
+                    Reagendar
+                </a>
+            </div>
+
+            <p><small>Se o link não funcionar, copie e cole no navegador:<br>Confirmar: ${confirmLink}<br>Reagendar: ${rescheduleLink}</small></p>
+            
+            <p>Atenciosamente,<br><strong>Equipe IntegrandoSer</strong></p>
+        </div>
+    `;
+
+    try {
+        const { data, error } = await resend.emails.send({
+            from: `IntegrandoSer <${fromEmail}>`,
+            to: [to],
+            subject: subject,
+            html: html,
+        });
+        if (error) throw error;
+        console.log(`E-mail de lembrete enviado para ${to}. ID: ${data?.id}`);
+    } catch (error) {
+        console.error(`Erro ao enviar lembrete para ${to}:`, error);
+    }
+};
+
+
+
 // Exporta todas as funções adaptadas
 module.exports = {
     sendWelcomeEmail,
     sendSchedulingEmail,
-    sendConfirmationEmail, // Agora adaptada
-    sendUpdateEmail,       // Agora adaptada
+    sendConfirmationEmail, 
+    sendUpdateEmail,       
     sendInvoiceNotificationEmail,
     sendReceiptUploadNotificationEmail,
-    sendPasswordResetEmail
+    sendPasswordResetEmail,
+    sendAppointmentReminder
 };

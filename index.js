@@ -8,6 +8,7 @@ const path = require('path');
 const { createServer } = require('http');
 const { Server } = require('socket.io'); 
 const { initializeSocket, getUserSocket } = require('./src/socketHandlers.js'); 
+const initScheduledJobs = require('./src/services/cronJobs.js');
 
 // --- Reativar TODAS as rotas ---
 const authRoutes = require('./src/routes/authRoutes.js');
@@ -57,7 +58,7 @@ app.use(express.json());
 // Criar o servidor HTTP
 const httpServer = createServer(app);
 
-// --- Reativar o Socket.IO ---
+
 const io = new Server(httpServer, {
     cors: {
         origin: allowedOrigins, // Usa a mesma lista de origens
@@ -68,15 +69,15 @@ const io = new Server(httpServer, {
 app.set('io', io); // Disponibiliza o 'io' para as rotas
 app.set('getUserSocket', getUserSocket); // Disponibiliza a função para as rotas
 initializeSocket(io); // Inicializa os handlers de conexão do socket
-// --- Fim da reativação do Socket.IO ---
 
-// --- Rota de Health Check ---
+
+
 // Útil para verificar se o servidor está no ar
 app.get('/', (req, res) => {
   console.log('[HEALTH CHECK] Rota / acessada. Servidor está operacional.');
   res.status(200).send('Servidor IntegrandoSer está operacional!');
 });
-// --- Fim do Health Check ---
+
 
 // --- Reativar Rotas da API ---
 // O Express usará estas rotas agora
@@ -93,24 +94,21 @@ app.use('/api/notes', notesRoutes);
 app.use('/api/dreams', dreamRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/calendar', calendarRoutes);
-// --- Fim da reativação das rotas ---
 
-// Servir arquivos estáticos (uploads)
+
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// --- MELHORIA: Handler de Rota Não Encontrada (404) ---
-// Deve ser colocado DEPOIS de todas as outras rotas
+
 app.use((req, res, next) => {
     console.warn(`[404] Rota não encontrada: ${req.method} ${req.originalUrl}`);
     res.status(404).send({ message: 'Rota não encontrada' });
 });
 
-// Handlers de Erro Globais (mantenha os seus)
+
 process.on('uncaughtException', (error) => {
     console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
     console.error('UNCAUGHT EXCEPTION:', error);
     console.error('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-    // Em produção, considere reiniciar o processo: process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -129,9 +127,13 @@ httpServer.on('clientError', (err, socket) => {
     console.error(`Client Error: ${err}`);
     socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
 });
-// --- Fim dos Handlers de Erro ---
+
 
 // Iniciar o servidor
 httpServer.listen(port, '0.0.0.0', () => {
   console.log(`Servidor completo rodando na porta ${port} ouvindo em 0.0.0.0`);
+
+  // Iniciar o Cron Job após o servidor subir
+  initScheduledJobs(); 
+  console.log('[Cron Service] Agendador de tarefas iniciado.');
 });
