@@ -70,10 +70,28 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
         `;
         const availableSlots = await conn.query(availableSlotsQuery);
 
+        // 4. Compromissos Pessoais (Adicione este bloco)
+        const personalAppsQuery = `
+            SELECT 
+                id, id as original_id,
+                title,
+                start_time as start,
+                end_time as end,
+                status,
+                color,
+                description,
+                'pessoal' as type
+            FROM personal_appointments
+            WHERE user_id = ?
+        `;
+
+        const personalAppointments = await conn.query(personalAppsQuery, [req.user.userId]);
+
         res.json({
             appointments: serializeBigInts(appointments),
             screeningAppointments: serializeBigInts(screeningAppointments),
-            availableSlots: serializeBigInts(availableSlots)
+            availableSlots: serializeBigInts(availableSlots),
+            personalAppointments: serializeBigInts(personalAppointments)
         });
 
     } catch (error) {
@@ -110,10 +128,28 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
             WHERE prof.user_id = ?
         `;
         const appointments = await conn.query(query, [userId]);
+
+        const personalAppsQuery = `
+            SELECT 
+                id, id as original_id,
+                title,
+                start_time as start,
+                end_time as end,
+                status,
+                color,
+                description,
+                'pessoal' as type
+            FROM personal_appointments
+            WHERE user_id = ?
+        `;
+        const personalAppointments = await conn.query(personalAppsQuery, [userId]);
+
+
         res.json({
             appointments: serializeBigInts(appointments),
             screeningAppointments: [],
-            availableSlots: []
+            availableSlots: [],
+            personalAppointments: serializeBigInts(personalAppointments)
         });
     } catch (error) {
         console.error("Erro ao buscar dados do calendário do profissional:", error);
@@ -122,5 +158,7 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
         if (conn) conn.release();
     }
 });
+
+
 
 module.exports = router;
