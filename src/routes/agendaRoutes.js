@@ -885,7 +885,7 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
             return res.status(403).json({ message: 'Esta consulta aguarda o pagamento do pacote. Você só pode cancelá-la.' });
         }
 
-        // --- ATUALIZAÇÃO PRINCIPAL DO STATUS ---
+        // --- PRINCIPAL DO STATUS ---
         await conn.query('UPDATE appointments SET status = ? WHERE id = ?', [status, id]);
 
         // --- LÓGICA DE FATURAMENTO (se 'Concluída' e não for de pacote) ---
@@ -898,58 +898,124 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
 
             if (appointmentDetails && appointmentDetails.session_value > 0) {
                 grossValueForEmail = parseFloat(appointmentDetails.session_value);
-                const commissionValue = grossValueForEmail * 0.25;
+                
+                // =================================================================
+                // 1. LÓGICA DE COMISSÃO (ATUALIZADA PARA PROFISSIONAL ESCOLA)
+                // =================================================================
+                
+                const [profData] = await conn.query("SELECT id, level FROM professionals WHERE id = ?", [appointmentDetails.professional_id]);
+                const [patientData] = await conn.query("SELECT id, created_by_professional_id FROM patients WHERE id = ?", [appointmentDetails.patient_id]);
+                
+                let commissionRate = 0.25; // Default: Profissional Padrão (25%)
 
-                // 1. Cria registro interno para comissão
+                if (profData && patientData) {
+                    if (profData.level === 'Profissional Habilitado') {
+                        commissionRate = 0; // Paga apenas taxa fixa
+                    } 
+                    else if (profData.level === 'Profissional Escola') {
+                        // REGRA ESPECÍFICA DO PROFISSIONAL ESCOLA
+                        
+                        // A) Verifica se é Paciente Próprio (Privado)
+                        if (patientData.created_by_professional_id === profData.id) {
+                            commissionRate = 0; // Regra 3: Nenhuma comissão para pacientes próprios
+                        } else {
+                            // B) É Paciente Externo (Triagem)
+                            // Regra 1 e 2: Isento até 2 pacientes externos. Cobra 25% a partir do 3º.
+                            
+                            // Busca todos os pacientes EXTERNOS (não criados por ele) vinculados a este profissional
+                            // Ordenados por data de criação para estabelecer quem são os "primeiros"
+                            const [externalPatients] = await conn.query(`
+                                SELECT DISTINCT p.id
+                                FROM patients p
+                                LEFT JOIN professional_assignments pa ON p.id = pa.patient_id
+                                LEFT JOIN appointments a ON p.id = a.patient_id
+                                WHERE 
+                                    (pa.professional_id = ? OR a.professional_id = ?) -- Vinculado ao profissional
+                                    AND (p.created_by_professional_id IS NULL OR p.created_by_professional_id != ?) -- NÃO criado por ele
+                                ORDER BY p.created_at ASC
+                            `, [profData.id, profData.id, profData.id]);
+
+                            // Encontra a posição deste paciente na lista de externos
+                            const patientIndex = externalPatients.findIndex(p => p.id === patientData.id);
+                            
+                            if (patientIndex >= 0 && patientIndex < 2) {
+                                // É o 1º ou 2º paciente externo -> Isento
+                                commissionRate = 0;
+                            } else {
+                                // É o 3º ou mais -> Cobra 25%
+                                commissionRate = 0.25;
+                            }
+                        }
+                    }
+                }
+
+                const commissionValue = grossValueForEmail * commissionRate;
+
+                // Salva o registro de faturamento do profissional (Comissão)
                 await conn.query(
                     `INSERT IGNORE INTO professional_billings (professional_id, appointment_id, billing_date, gross_value, commission_value, status) VALUES (?, ?, ?, ?, ?, ?)`,
                     [appointmentDetails.professional_id, id, new Date(appointmentDetails.appointment_time), grossValueForEmail, commissionValue, 'unbilled']
                 );
 
-                // 2. Identifica o pagador
+                // =================================================================
+                // 2. LÓGICA DE COBRANÇA (FATURA PARA O PAGADOR)
+                // =================================================================
+                
                 const [patientDetails] = await conn.query("SELECT user_id, company_id, nome FROM patients WHERE id = ?", [appointmentDetails.patient_id]);
 
+                let recipientUserId = null;
+                let recipientName = null; // Variáveis opcionais se precisar para logs
+                let recipientEmail = null;
+                let recipientType = null;
+
                 if (patientDetails) {
-                    // Lógica para determinar recipientUserId, recipientName, recipientEmail, recipientType
+                    // Tenta cobrar da Empresa primeiro
                     if (patientDetails.company_id) {
                         const [companyDetails] = await conn.query(
                             "SELECT u.id as user_id, c.nome_empresa as name, u.email FROM companies c JOIN users u ON c.user_id = u.id WHERE c.id = ?",
                             [patientDetails.company_id]
                         );
                         if (companyDetails) {
-                            recipientUserId = companyDetails.user_id; recipientName = companyDetails.name; recipientEmail = companyDetails.email; recipientType = 'empresa';
+                            recipientUserId = companyDetails.user_id; 
+                            recipientName = companyDetails.name; 
+                            recipientEmail = companyDetails.email; 
+                            recipientType = 'empresa';
                         }
                     }
-                    if (!recipientUserId) { // Cobra o paciente
+                    
+                    // Se não tiver empresa, cobra do Paciente
+                    if (!recipientUserId) { 
                         const [userPatientDetails] = await conn.query(
                             "SELECT u.id as user_id, p.nome as name, u.email FROM patients p JOIN users u ON p.user_id = u.id WHERE p.id = ?",
                             [appointmentDetails.patient_id]
                         );
                         if (userPatientDetails) {
-                            recipientUserId = userPatientDetails.user_id; recipientName = userPatientDetails.name; recipientEmail = userPatientDetails.email; recipientType = 'paciente';
+                            recipientUserId = userPatientDetails.user_id; 
+                            recipientName = userPatientDetails.name; 
+                            recipientEmail = userPatientDetails.email; 
+                            recipientType = 'paciente';
                         }
                     }
 
-                    // 3. Cria a fatura se encontrou pagador
+                    // 3. Cria a fatura no sistema se encontrou um pagador válido
                     if (recipientUserId) {
-                        const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + 15);
-                        dueDateForEmail = dueDate; // Guarda para e-mail
+                        const dueDate = new Date(); 
+                        dueDate.setDate(dueDate.getDate() + 15); // Vencimento em 15 dias
+                        dueDateForEmail = dueDate; 
+                        
                         const description = `Referente à sessão com ${patientDetails.nome} em ${new Date(appointmentDetails.appointment_time).toLocaleDateString('pt-BR')}.`;
 
                         const invoiceResult = await conn.query(
                             'INSERT INTO invoices (user_id, creator_user_id, amount, due_date, description, status) VALUES (?, ?, ?, ?, ?, ?)',
                             [recipientUserId, userId, grossValueForEmail, dueDate, description, 'pending']
                         );
-                        // Verificar se insertId existe antes de atribuir
-                        newInvoiceId = (invoiceResult && invoiceResult[0]) ? invoiceResult[0].insertId : (invoiceResult ? invoiceResult.insertId : null);
-                        if (!newInvoiceId) {
-                            console.error("ERRO: Não foi possível obter o ID da nova fatura após inserção.");
-                            // Lançar um erro aqui pode ser apropriado se a fatura for crítica
-                            // throw new Error("Falha ao obter ID da fatura.");
-                        }
+                        
+                        // Opcional: Pegar o ID da nova fatura
+                        const newInvoiceId = invoiceResult.insertId;
                     }
                 }
             }
+        
         } else if (!appointmentDetailsForEmail) { // Se não buscou detalhes no bloco 'Concluída'
              // Busca detalhes básicos APENAS para notificação de status (se não for 'Concluída')
              const [appointmentDetails] = await conn.query( "SELECT professional_id, patient_id, appointment_time FROM appointments WHERE id = ?", [id] );

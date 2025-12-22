@@ -493,103 +493,6 @@ router.post('/', protect, isAdmin, upload.single('imagem_perfil'), async (req, r
     }
 });
 
-// PUT /api/users/:id - Atualiza um usuário com perfil 
-/*
-router.put('/:id', protect, isAdmin, upload.single('imagem_perfil'), async (req, res) => {
-    const { email, role_id, profileData: profileDataJSON } = req.body;
-    const profileData = JSON.parse(profileDataJSON || '{}');
-    const { id } = req.params;
-
-    if (!email || !role_id) {
-        return res.status(400).json({ message: 'Email e Categoria de Usuário são obrigatórios.' });
-    }
-
-    // Adiciona a URL da imagem se um novo arquivo foi enviado
-    if (req.file && req.file.gcsUrl) { // <<< Verifica se gcsUrl existe
-        profileData.imagem_url = req.file.gcsUrl; // <<< Linha corrigida
-    } else if (req.file) {
-        console.warn(`[USER CREATE] Arquivo ${req.file.originalname} recebido, mas URL GCS não encontrada.`);
-        // Decide se quer lançar um erro ou criar o usuário sem imagem
-    }
-
-    // Verifica se a data de nascimento é uma string válida antes de processar.
-    if (profileData.data_nascimento && typeof profileData.data_nascimento === 'string') {
-        const date = new Date(profileData.data_nascimento);
-        // A forma padrão de verificar se uma data é válida em JS é checando se seu tempo não é NaN
-        if (!isNaN(date.getTime())) {
-            profileData.data_nascimento = date.toISOString().split('T')[0];
-        } else {
-            // Se a string não for uma data válida, salve como null.
-            profileData.data_nascimento = null;
-        }
-    } else {
-        // Se não for uma string (ou for vazia/null/undefined), salve como null.
-        profileData.data_nascimento = null;
-    }
-
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        await conn.beginTransaction();
-
-        // Atualiza a senha apenas se uma nova for fornecida
-        if (req.body.password) {
-            const salt = await bcrypt.genSalt(10);
-            const hashedPassword = await bcrypt.hash(req.body.password, salt);
-            await conn.query('UPDATE users SET email = ?, role_id = ?, password = ? WHERE id = ?', [email, role_id, hashedPassword, id]);
-        } else {
-            await conn.query('UPDATE users SET email = ?, role_id = ? WHERE id = ?', [email, role_id, id]);
-        }
-
-        await conn.query('UPDATE users SET email = ?, role_id = ? WHERE id = ?', [email, role_id, id]);
-        
-        const roleResult = await conn.query('SELECT name FROM roles WHERE id = ?', [req.body.role_id]);
-        const role = roleResult[0].name;
-        
-        let tableName, allFields;
-        switch (role) {
-            case 'ADM':
-                tableName = 'administrators';
-                allFields = ['nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'telefone', 'email', 'endereco', 'profissao', 'imagem_url'];
-                break;
-            case 'PROFISSIONAL':
-                tableName = 'professionals';
-                allFields = ['nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url'];
-                break;
-            case 'PACIENTE':
-                tableName = 'patients';
-                allFields = ['nome', 'cpf', 'telefone', 'profissao', 'imagem_url', 'renda', 'preferencia_gen_atend', 'data_nascimento', 'genero', 'endereco', 'cidade', 'tipo_atendimento', 'modalidade_atendimento'];
-                break;
-            case 'EMPRESA':
-                tableName = 'companies'; 
-                allFields = ['nome_empresa', 'cnpj', 'num_colaboradores', 'nome_responsavel', 'cargo', 'telefone', 'email_contato', 'descricao', 'tipo_atendimento', 'frequencia', 'expectativa', 'imagem_url'];
-                break;
-            default: throw new Error('Papel inválido');
-        }
-
-        // Constrói a query de UPDATE dinamicamente apenas com os campos que foram enviados
-        const fieldsToUpdate = allFields.filter(field => profileData[field] !== undefined);
-        
-        // Só executa o UPDATE se houver campos de perfil para atualizar
-        if (fieldsToUpdate.length > 0) {
-            const setClause = fieldsToUpdate.map(field => `${field} = ?`).join(', ');
-            const values = fieldsToUpdate.map(field => profileData[field]);
-            await conn.query(`UPDATE ${tableName} SET ${setClause} WHERE user_id = ?`, [...values, id]);
-        }
-        
-        
-        await conn.commit();
-        res.json({ message: 'Usuário atualizado com sucesso!' });
-
-    } catch (error) {
-        if (conn) await conn.rollback();
-        console.error("Erro ao atualizar usuário:", error);
-        res.status(500).json({ message: 'Erro ao atualizar usuário.', error: error.message });
-    } finally {
-        if (conn) conn.release();
-    }
-});
-*/
 // PUT /api/users/:id - Atualiza um usuário com perfil
 router.put('/:id', protect, isAdmin, upload.single('imagem_perfil'), async (req, res) => {
     const { email, role_id, profileData: profileDataJSON } = req.body;
@@ -734,7 +637,9 @@ router.post('/professional/create-patient', protect, isProfissional, async (req,
 
         // 1. VERIFICAR PERMISSÃO DO PROFISSIONAL PELO SEU 'level'
         const [profProfile] = await conn.query("SELECT id, level FROM professionals WHERE user_id = ?", [professionalUserId]);
-        if (!profProfile || profProfile.level !== 'Profissional Habilitado') {
+        
+        // Verifica se o nível está na lista de permitidos
+        if (!profProfile || !['Profissional Habilitado', 'Profissional Escola'].includes(profProfile.level)) {
             return res.status(403).json({ message: 'Você não tem permissão para criar pacientes.' });
         }
         const professionalId = profProfile.id;
@@ -850,7 +755,7 @@ router.patch('/professional/patient/:patientId/status', protect, isProfissional,
              return res.status(403).json({ message: 'Você não tem permissão para modificar este paciente (vínculo não encontrado).' });
         }
         
-        if (profAndLink.level !== 'Profissional Habilitado') {
+        if (!['Profissional Habilitado', 'Profissional Escola'].includes(profAndLink.level)) {
              return res.status(403).json({ message: 'Você não tem permissão para alterar o status de pacientes.' });
         }
 
@@ -905,7 +810,7 @@ router.put('/professional/patient/:patientId', protect, isProfissional, async (r
 
         // 1. VERIFICAR PERMISSÃO DO PROFISSIONAL
         const [profProfile] = await conn.query("SELECT id, level FROM professionals WHERE user_id = ?", [professionalUserId]);
-        if (!profProfile || profProfile.level !== 'Profissional Habilitado') {
+        if (!profProfile || !['Profissional Habilitado', 'Profissional Escola'].includes(profProfile.level)) {
             await conn.rollback();
             return res.status(403).json({ message: 'Você não tem permissão para editar pacientes.' });
         }
@@ -984,7 +889,7 @@ router.delete('/professional/patient/:patientId', protect, isProfissional, async
         
         // 1. VERIFICAR PERMISSÃO DO PROFISSIONAL
         const [profProfile] = await conn.query("SELECT id, level FROM professionals WHERE user_id = ?", [professionalUserId]);
-        if (!profProfile || profProfile.level !== 'Profissional Habilitado') {
+        if (!profProfile || !['Profissional Habilitado', 'Profissional Escola'].includes(profProfile.level)) {
             return res.status(403).json({ message: 'Você não tem permissão para excluir pacientes.' });
         }
         const professionalId = profProfile.id;
