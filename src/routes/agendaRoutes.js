@@ -1162,7 +1162,7 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
         conn = await pool.getConnection();
         await conn.beginTransaction();
 
-        cconst [profProfile] = await conn.query("SELECT id, nome, level FROM professionals WHERE user_id = ? AND id = ?", [userId, professional_id]);
+        const [profProfile] = await conn.query("SELECT id, nome, level FROM professionals WHERE user_id = ? AND id = ?", [userId, professional_id]);
         
         // Verifica se o perfil existe e se o nível está na lista de permitidos
         if (!profProfile || !['Profissional Habilitado', 'Profissional Escola'].includes(profProfile.level)) {
