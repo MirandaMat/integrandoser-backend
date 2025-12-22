@@ -1162,10 +1162,12 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
         conn = await pool.getConnection();
         await conn.beginTransaction();
 
-        const [profProfile] = await conn.query("SELECT id, nome, level FROM professionals WHERE user_id = ? AND id = ?", [userId, professional_id]);
-        if (!profProfile || profProfile.level !== 'Profissional Habilitado') {
+        cconst [profProfile] = await conn.query("SELECT id, nome, level FROM professionals WHERE user_id = ? AND id = ?", [userId, professional_id]);
+        
+        // Verifica se o perfil existe e se o nível está na lista de permitidos
+        if (!profProfile || !['Profissional Habilitado', 'Profissional Escola'].includes(profProfile.level)) {
             await conn.rollback();
-            return res.status(403).json({ message: 'Ação não autorizada. Você não tem permissão para criar agendamentos.' });
+            return res.status(403).json({ message: 'Ação não autorizada. Seu nível profissional não permite criar agendamentos.' });
         }
         const professionalName = profProfile.nome;
 
