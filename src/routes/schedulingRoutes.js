@@ -434,7 +434,7 @@ router.patch('/appointments/:id/reschedule', protect, isAdmin, async (req, res) 
 // ==========================================
 
 // 1. Definir/Adicionar disponibilidade
-router.post('/professional/availability', protect, isProfissional, async (req, res) => {
+router.post('/availability/professional', protect, isProfissional, async (req, res) => {
     const { slots } = req.body;
     const { userId } = req.user;
 
@@ -466,13 +466,15 @@ router.post('/professional/availability', protect, isProfissional, async (req, r
 });
 
 // 2. Buscar disponibilidade (Para o próprio profissional gerenciar)
-router.get('/professional/availability/me', protect, isProfissional, async (req, res) => {
+router.get('/availability/me', protect, isProfissional, async (req, res) => {
     const { userId } = req.user;
     let conn;
     try {
         conn = await pool.getConnection();
         const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
         
+        if (!prof) return res.status(404).json({ message: 'Perfil profissional não encontrado.' });
+
         // Clean old unused slots
         await conn.query("DELETE FROM professional_availability WHERE professional_id = ? AND is_booked = FALSE AND start_time < NOW() - INTERVAL 1 DAY", [prof.id]);
 
@@ -482,6 +484,7 @@ router.get('/professional/availability/me', protect, isProfissional, async (req,
         );
         res.json(serializeBigInts(slots));
     } catch (error) {
+        console.error(error);
         res.status(500).json({ message: 'Erro ao buscar horários.' });
     } finally {
         if (conn) conn.release();
@@ -489,7 +492,7 @@ router.get('/professional/availability/me', protect, isProfissional, async (req,
 });
 
 // 3. Deletar disponibilidade
-router.delete('/professional/availability/:id', protect, isProfissional, async (req, res) => {
+router.delete('/availability/professional/:id', protect, isProfissional, async (req, res) => {
     const { id } = req.params;
     const { userId } = req.user;
     let conn;
