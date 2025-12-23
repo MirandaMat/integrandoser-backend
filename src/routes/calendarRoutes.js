@@ -18,26 +18,27 @@ const serializeBigInts = (data) => {
     });
 };
 
-/**
- * ROTA PARA O CALENDÁRIO DO ADMIN (ATUALIZADA)
- * Agrega consultas, agendamentos de triagem e horários de triagem disponíveis.
- */
+
 router.get('/admin', protect, isAdmin, async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
 
-        // 1. Consultas normais
-        // Alterado para incluir "com [Nome do Profissional]" no título
+        // 1. Consultas normais (ADICIONADO: appointment_time, IDs e valores)
         const appointmentsQuery = `
             SELECT 
                 a.id, a.id as original_id,
                 CONCAT('Consulta: ', pat.nome, ' com ', prof.nome) as title,
                 a.appointment_time as start,
+                a.appointment_time, -- Necessário para o Modal
                 a.status,
+                a.session_value,    -- Necessário para o Modal
+                a.patient_id,       -- Necessário para o Modal
+                a.professional_id,  -- Necessário para o Modal
                 'consulta' as type,
                 prof.nome as professional_name,
-                pat.nome as patient_name
+                pat.nome as patient_name,
+                pat.imagem_url as patient_photo
             FROM appointments a
             JOIN professionals prof ON a.professional_id = prof.id
             JOIN patients pat ON a.patient_id = pat.id
@@ -70,7 +71,7 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
         `;
         const availableSlots = await conn.query(availableSlotsQuery);
 
-        // 4. Compromissos Pessoais (Adicione este bloco)
+        // 4. Compromissos Pessoais
         const personalAppsQuery = `
             SELECT 
                 id, id as original_id,
@@ -109,7 +110,6 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
     try {
         conn = await pool.getConnection();
         
-        // 1. Identifica o ID do profissional
         const [profProfile] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
         
         if (!profProfile) {
@@ -117,15 +117,20 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
         }
         const professionalId = profProfile.id;
 
-        // 2. Consultas (Appointments)
+        // 2. Consultas (ADICIONADO: appointment_time, IDs e valores)
         const queryAppointments = `
             SELECT 
                 a.id, a.id as original_id,
                 CONCAT('Consulta: ', p.nome) as title,
                 a.appointment_time as start,
+                a.appointment_time, -- Necessário para o Modal
                 a.status,
+                a.session_value,    -- Necessário para o Modal
+                a.patient_id,       -- Necessário para o Modal
+                a.professional_id,  -- Necessário para o Modal
                 'consulta' as type,
-                p.nome as patient_name
+                p.nome as patient_name,
+                p.imagem_url as patient_photo
             FROM appointments a
             JOIN patients p ON a.patient_id = p.id
             WHERE a.professional_id = ?
@@ -148,7 +153,7 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
         `;
         const personalAppointments = await conn.query(queryPersonal, [userId]);
 
-        // 4. NOVO: Horários Livres (Disponibilidade para Reagendamento)
+        // 4. Horários Livres (Disponibilidade para Reagendamento)
         const querySlots = `
             SELECT 
                 CONCAT('slot-', id) as id, id as original_id,
@@ -165,7 +170,7 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
         res.json({
             appointments: serializeBigInts(appointments),
             screeningAppointments: [],
-            availableSlots: serializeBigInts(availableSlots), // Enviando os slots
+            availableSlots: serializeBigInts(availableSlots),
             personalAppointments: serializeBigInts(personalAppointments)
         });
     } catch (error) {
