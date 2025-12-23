@@ -103,33 +103,37 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
 });
 
 
-/**
- * ROTA PARA O CALENDÁRIO DO PROFISSIONAL (ATUALIZADA)
- * Busca apenas as consultas vinculadas ao profissional logado.
- */
 router.get('/professional', protect, isProfissional, async (req, res) => {
     const { userId } = req.user;
     let conn;
     try {
         conn = await pool.getConnection();
         
-        // Alterado para incluir "com [Nome do Profissional]" no título
-        const query = `
+        // 1. Identifica o ID do profissional
+        const [profProfile] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        
+        if (!profProfile) {
+            return res.status(404).json({ message: 'Perfil profissional não encontrado.' });
+        }
+        const professionalId = profProfile.id;
+
+        // 2. Consultas (Appointments)
+        const queryAppointments = `
             SELECT 
                 a.id, a.id as original_id,
-                CONCAT('Consulta: ', p.nome, ' com ', prof.nome) as title,
+                CONCAT('Consulta: ', p.nome) as title,
                 a.appointment_time as start,
                 a.status,
                 'consulta' as type,
                 p.nome as patient_name
             FROM appointments a
             JOIN patients p ON a.patient_id = p.id
-            JOIN professionals prof ON a.professional_id = prof.id
-            WHERE prof.user_id = ?
+            WHERE a.professional_id = ?
         `;
-        const appointments = await conn.query(query, [userId]);
+        const appointments = await conn.query(queryAppointments, [professionalId]);
 
-        const personalAppsQuery = `
+        // 3. Compromissos Pessoais
+        const queryPersonal = `
             SELECT 
                 id, id as original_id,
                 title,
@@ -142,13 +146,26 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
             FROM personal_appointments
             WHERE user_id = ?
         `;
-        const personalAppointments = await conn.query(personalAppsQuery, [userId]);
+        const personalAppointments = await conn.query(queryPersonal, [userId]);
 
+        // 4. NOVO: Horários Livres (Disponibilidade para Reagendamento)
+        const querySlots = `
+            SELECT 
+                CONCAT('slot-', id) as id, id as original_id,
+                'Horário Livre' as title,
+                start_time as start,
+                end_time as end,
+                'Livre' as status,
+                'slot_reagendamento' as type
+            FROM professional_availability
+            WHERE professional_id = ? AND is_booked = FALSE
+        `;
+        const availableSlots = await conn.query(querySlots, [professionalId]);
 
         res.json({
             appointments: serializeBigInts(appointments),
             screeningAppointments: [],
-            availableSlots: [],
+            availableSlots: serializeBigInts(availableSlots), // Enviando os slots
             personalAppointments: serializeBigInts(personalAppointments)
         });
     } catch (error) {
@@ -158,7 +175,5 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
         if (conn) conn.release();
     }
 });
-
-
 
 module.exports = router;
