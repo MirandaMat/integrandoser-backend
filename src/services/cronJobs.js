@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const { sendAppointmentReminder } = require('../config/mailer');
 
 // Base URL of your frontend
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const FRONTEND_URL = 'https://integrandoser.com.br' || 'http://localhost:5173';
 
 const initScheduledJobs = () => {
     // Runs every hour to check for appointments happening in exactly 24 hours (roughly)
