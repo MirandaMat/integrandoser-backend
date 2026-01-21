@@ -157,15 +157,21 @@ router.patch('/professional/patient/:patientId/value', protect, isProfissional, 
 });
 
 // ROTA PARA O PROFISSIONAL BUSCAR SEUS PACIENTES E EMPRESAS
+// ROTA PARA O PROFISSIONAL BUSCAR SEUS PACIENTES E EMPRESAS
 router.get('/my-associates', [protect, isProfissional], async (req, res) => {
     const { userId } = req.user;
     let conn;
     try {
         conn = await pool.getConnection();
-        const [profProfileRows] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        
+        // CORREÇÃO: Verifica se o retorno é [rows, fields] ou apenas rows
+        const profResult = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        const profProfileRows = Array.isArray(profResult) && Array.isArray(profResult[0]) ? profResult[0] : profResult;
+        
         if (!profProfileRows || profProfileRows.length === 0) {
              return res.json({ patients: [], companies: [] });
         }
+        
         const professionalId = profProfileRows[0].id;
 
         // Query COMPLEXA para buscar métricas financeiras e de datas
@@ -206,22 +212,23 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
             ORDER BY p.nome ASC;
         `;
         
-        // Passamos professionalId 5 vezes para preencher os ? das subqueries e do WHERE principal
-        const [patients] = await conn.query(patientsQuery, [
+        const patientsResult = await conn.query(patientsQuery, [
             professionalId, 
             professionalId, 
             professionalId, 
             professionalId, 
             professionalId
         ]);
+        const patients = Array.isArray(patientsResult) && Array.isArray(patientsResult[0]) ? patientsResult[0] : patientsResult;
 
-        const [companies] = await conn.query(
+        const companiesResult = await conn.query(
             `SELECT DISTINCT c.id, c.user_id, c.nome_empresa FROM companies c
             JOIN patients p ON c.id = p.company_id
             JOIN appointments a ON p.id = a.patient_id
             WHERE a.professional_id = ? AND p.company_id IS NOT NULL`,
             [professionalId]
         );
+        const companies = Array.isArray(companiesResult) && Array.isArray(companiesResult[0]) ? companiesResult[0] : companiesResult;
         
         res.json({ patients: serializeBigInts(patients), companies: serializeBigInts(companies) });
     } catch (error) {
