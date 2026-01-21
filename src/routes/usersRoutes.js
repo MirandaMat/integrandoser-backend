@@ -186,7 +186,9 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
                 p.telefone, 
                 p.data_nascimento, 
                 p.imagem_url,
-                u.created_at, -- Data de criação (usuário)
+                p.billing_type,      
+                p.billing_due_day,
+                u.created_at, 
                 u.email,
                 u.status,
                 
@@ -903,7 +905,7 @@ router.put('/professional/patient/:patientId', protect, isProfissional, async (r
         const patientUserId = assignment.user_id; // <-- Pega o user_id do paciente
 
         // 3. ATUALIZAR OS DADOS DO PERFIL (tabela patients)
-        const allowedPatientFields = ['nome', 'cpf', 'telefone', 'data_nascimento']; 
+        const allowedPatientFields = ['nome', 'cpf', 'telefone', 'data_nascimento', 'billing_type', 'billing_due_day'];
         const fieldsToUpdate = allowedPatientFields.filter(field => profileData[field] !== undefined);
         
         let profileUpdated = false;
