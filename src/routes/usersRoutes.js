@@ -162,7 +162,7 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
-        const profProfileRows = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        const [profProfileRows] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
         if (!profProfileRows || profProfileRows.length === 0) {
              return res.json({ patients: [], companies: [] });
         }
@@ -207,7 +207,7 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
         `;
         
         // Passamos professionalId 5 vezes para preencher os ? das subqueries e do WHERE principal
-        const patients = await conn.query(patientsQuery, [
+        const [patients] = await conn.query(patientsQuery, [
             professionalId, 
             professionalId, 
             professionalId, 
@@ -215,11 +215,11 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
             professionalId
         ]);
 
-        const companies = await conn.query(
+        const [companies] = await conn.query(
             `SELECT DISTINCT c.id, c.user_id, c.nome_empresa FROM companies c
-             JOIN patients p ON c.id = p.company_id
-             JOIN appointments a ON p.id = a.patient_id
-             WHERE a.professional_id = ? AND p.company_id IS NOT NULL`,
+            JOIN patients p ON c.id = p.company_id
+            JOIN appointments a ON p.id = a.patient_id
+            WHERE a.professional_id = ? AND p.company_id IS NOT NULL`,
             [professionalId]
         );
         
