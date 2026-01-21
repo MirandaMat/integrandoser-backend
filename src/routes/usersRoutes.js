@@ -86,7 +86,9 @@ router.get('/', protect, isAdmin, async (req, res) => {
         }
         
         const users = await conn.query(query, queryParams);
-        res.json(serializeBigInts(users));
+        // Compatibilidade mysql2
+        const result = Array.isArray(users) && Array.isArray(users[0]) ? users[0] : users;
+        res.json(serializeBigInts(result));
     } catch (error) {
         console.error("Erro ao buscar usuários:", error);
         res.status(500).json({ message: 'Erro ao buscar usuários.' });
@@ -100,7 +102,6 @@ router.get('/role/professionals', protect, isAdmin, async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
-        // Query para buscar apenas os usuários com a role 'PROFISSIONAL'
         const query = `
             SELECT 
                 p.id,
@@ -115,8 +116,8 @@ router.get('/role/professionals', protect, isAdmin, async (req, res) => {
             ORDER BY p.nome;
         `;
         const professionals = await conn.query(query);
-        // Usamos o serializeBigInts que já existe no seu arquivo
-        res.json(serializeBigInts(professionals));
+        const result = Array.isArray(professionals) && Array.isArray(professionals[0]) ? professionals[0] : professionals;
+        res.json(serializeBigInts(result));
     } catch (error)        {
         console.error("Erro ao buscar profissionais:", error);
         res.status(500).json({ message: 'Erro ao buscar profissionais.' });
@@ -136,11 +137,13 @@ router.patch('/professional/patient/:patientId/value', protect, isProfissional, 
     let conn;
     try {
         conn = await pool.getConnection();
-        const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
-        if (!prof) return res.status(403).json({ message: 'Acesso negado.' });
+        const profResult = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        const profRows = Array.isArray(profResult) && Array.isArray(profResult[0]) ? profResult[0] : profResult;
+        
+        if (!profRows || profRows.length === 0) return res.status(403).json({ message: 'Acesso negado.' });
+        const prof = profRows[0];
 
-        // Atualiza o valor das próximas consultas AGENDADAS deste paciente com este profissional
-        // Isso simula a "atualização do valor contratado"
+        // Atualiza o valor das próximas consultas AGENDADAS
         await conn.query(
             `UPDATE appointments 
              SET session_value = ? 
@@ -183,7 +186,7 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
                 p.telefone, 
                 p.data_nascimento, 
                 p.imagem_url,
-                u.created_at, -- Pega data de criação do usuário
+                u.created_at, -- Data de criação (usuário)
                 u.email,
                 u.status,
                 
@@ -192,11 +195,13 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
                  FROM appointments a 
                  WHERE a.patient_id = p.id AND a.professional_id = ? AND a.status = 'Concluída') as total_sessions,
 
-                -- Valor da Última Consulta
-                (SELECT session_value 
-                 FROM appointments a 
-                 WHERE a.patient_id = p.id AND a.professional_id = ? 
-                 ORDER BY a.appointment_time DESC LIMIT 1) as current_value,
+                -- Valor da Última Consulta (Base para edição) - COALESCE para evitar null
+                COALESCE(
+                    (SELECT session_value 
+                     FROM appointments a 
+                     WHERE a.patient_id = p.id AND a.professional_id = ? 
+                     ORDER BY a.appointment_time DESC LIMIT 1), 
+                0) as current_value,
 
                 -- Data da Última Sessão
                 (SELECT appointment_time 
@@ -1564,16 +1569,13 @@ router.get('/:userId/linked-patients', protect, isAdmin, async (req, res) => {
     try {
         conn = await pool.getConnection();
 
-        // 1. Descobrir o ID do profissional na tabela professionals baseado no user_id
         const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [targetUserId]);
         
         if (!prof) {
-            return res.json([]); // Não é profissional ou não encontrado
+            return res.json([]); 
         }
         const professionalId = prof.id;
 
-        // 2. Buscar pacientes vinculados (mesma lógica do /my-associates)
-        // Vínculo por criação (created_by) ou por agendamento (appointments)
         const query = `
             SELECT DISTINCT 
                 p.id, 
@@ -1585,7 +1587,8 @@ router.get('/:userId/linked-patients', protect, isAdmin, async (req, res) => {
             ORDER BY p.nome ASC
         `;
 
-        const patients = await conn.query(query, [professionalId, professionalId]);
+        const patientsResult = await conn.query(query, [professionalId, professionalId]);
+        const patients = Array.isArray(patientsResult) && Array.isArray(patientsResult[0]) ? patientsResult[0] : patientsResult;
         res.json(serializeBigInts(patients));
 
     } catch (error) {
@@ -1595,7 +1598,6 @@ router.get('/:userId/linked-patients', protect, isAdmin, async (req, res) => {
         if (conn) conn.release();
     }
 });
-
 
 
 module.exports = router;
