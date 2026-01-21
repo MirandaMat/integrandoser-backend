@@ -157,14 +157,13 @@ router.patch('/professional/patient/:patientId/value', protect, isProfissional, 
 });
 
 // ROTA PARA O PROFISSIONAL BUSCAR SEUS PACIENTES E EMPRESAS
-// ROTA PARA O PROFISSIONAL BUSCAR SEUS PACIENTES E EMPRESAS
 router.get('/my-associates', [protect, isProfissional], async (req, res) => {
     const { userId } = req.user;
     let conn;
     try {
         conn = await pool.getConnection();
         
-        // CORREÇÃO: Verifica se o retorno é [rows, fields] ou apenas rows
+        // Verifica se o retorno é [rows, fields] ou apenas rows
         const profResult = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
         const profProfileRows = Array.isArray(profResult) && Array.isArray(profResult[0]) ? profResult[0] : profResult;
         
@@ -184,7 +183,7 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
                 p.telefone, 
                 p.data_nascimento, 
                 p.imagem_url,
-                p.created_at, -- Data do Ingresso
+                u.created_at, -- CORRIGIDO AQUI: Mudamos de 'p.created_at' para 'u.created_at'
                 u.email,
                 u.status,
                 
@@ -238,6 +237,7 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
         if (conn) conn.release();
     }
 });
+
 
 // GET /api/users/:id - Busca um usuário específico com perfil
 /* 
