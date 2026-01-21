@@ -9,27 +9,28 @@ const router = express.Router();
 
 // Função auxiliar para converter BigInt para String
 const serializeBigInts = (data) => {
-    // Se o dado for um BigInt, converte para string.
+    // 1. Se for BigInt, converte para string
     if (typeof data === 'bigint') {
         return data.toString();
     }
-    // Se for um array, aplica a função a cada item.
+    // 2. Se for Data, retorna ela mesma (o res.json converte pra ISO string)
+    if (data instanceof Date) {
+        return data;
+    }
+    // 3. Se for array, mapeia
     if (Array.isArray(data)) {
         return data.map(item => serializeBigInts(item));
     }
-    if (data === null || data === undefined) {
+    // 4. Se for null ou não for objeto (string, number, boolean)
+    if (data === null || typeof data !== 'object') {
         return data;
     }
-    // Se for um objeto (mas não nulo), aplica a função a cada valor de propriedade.
-    if (typeof data === 'object' && data !== null) {
-        const res = {};
-        for (const key in data) {
-            res[key] = serializeBigInts(data[key]);
-        }
-        return res;
+    // 5. Se for objeto genérico, percorre chaves
+    const res = {};
+    for (const key in data) {
+        res[key] = serializeBigInts(data[key]);
     }
-    // Para todos os outros tipos (string, number, boolean, null), retorna o valor original.
-    return data;
+    return res;
 };
 
 
@@ -182,7 +183,7 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
                 p.telefone, 
                 p.data_nascimento, 
                 p.imagem_url,
-                u.created_at as created_at, -- ALIAS EXPLÍCITO para garantir o nome da propriedade no JSON
+                u.created_at, -- Pega data de criação do usuário
                 u.email,
                 u.status,
                 
