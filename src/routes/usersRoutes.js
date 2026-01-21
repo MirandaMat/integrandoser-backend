@@ -163,7 +163,6 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
     try {
         conn = await pool.getConnection();
         
-        // Verifica se o retorno é [rows, fields] ou apenas rows
         const profResult = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
         const profProfileRows = Array.isArray(profResult) && Array.isArray(profResult[0]) ? profResult[0] : profResult;
         
@@ -183,7 +182,7 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
                 p.telefone, 
                 p.data_nascimento, 
                 p.imagem_url,
-                u.created_at, -- CORRIGIDO AQUI: Mudamos de 'p.created_at' para 'u.created_at'
+                u.created_at as created_at, -- ALIAS EXPLÍCITO para garantir o nome da propriedade no JSON
                 u.email,
                 u.status,
                 
@@ -192,13 +191,13 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
                  FROM appointments a 
                  WHERE a.patient_id = p.id AND a.professional_id = ? AND a.status = 'Concluída') as total_sessions,
 
-                -- Valor da Última Consulta (Base para edição)
+                -- Valor da Última Consulta
                 (SELECT session_value 
                  FROM appointments a 
                  WHERE a.patient_id = p.id AND a.professional_id = ? 
                  ORDER BY a.appointment_time DESC LIMIT 1) as current_value,
 
-                -- Data da Última Sessão (Usada como referência de reajuste/atividade)
+                -- Data da Última Sessão
                 (SELECT appointment_time 
                  FROM appointments a 
                  WHERE a.patient_id = p.id AND a.professional_id = ? 
