@@ -457,12 +457,36 @@ router.post('/create-appointment', protect, isAdmin, async (req, res) => {
 // Rota para o ADMIN DELETAR um agendamento
 router.delete('/appointments/:id', protect, isAdmin, async (req, res) => {
     const { id } = req.params;
+    const { delete_type } = req.query; // Recebe o tipo de exclusão: 'single' ou 'future'
+
     let conn;
     try {
         conn = await pool.getConnection();
-        await conn.query('DELETE FROM appointments WHERE id = ?', [id]);
-        res.json({ message: 'Agendamento removido com sucesso.' });
+        await conn.beginTransaction();
+
+        // 1. Busca dados do agendamento para saber a série e data
+        const [appointment] = await conn.query("SELECT series_id, appointment_time FROM appointments WHERE id = ?", [id]);
+
+        if (!appointment) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Agendamento não encontrado.' });
+        }
+
+        if (delete_type === 'future' && appointment.series_id) {
+            // Exclui o atual E os futuros da mesma série
+            await conn.query(
+                "DELETE FROM appointments WHERE series_id = ? AND appointment_time >= ?", 
+                [appointment.series_id, appointment.appointment_time]
+            );
+        } else {
+            // Exclui apenas o atual (comportamento padrão)
+            await conn.query('DELETE FROM appointments WHERE id = ?', [id]);
+        }
+
+        await conn.commit();
+        res.json({ message: 'Agendamento(s) removido(s) com sucesso.' });
     } catch (error) {
+        if (conn) await conn.rollback();
         console.error("Erro ao remover agendamento:", error);
         res.status(500).json({ message: 'Erro ao remover agendamento.' });
     } finally {
@@ -489,31 +513,26 @@ router.put('/appointments/:id', protect, isAdmin, async (req, res) => {
             return res.status(404).json({ message: 'Agendamento não encontrado.' });
         }
 
-        // --- LÓGICA DE SÉRIE ---
         // Se houver alteração de horário e o agendamento fizer parte de uma série
         if (appointment_time && originalAppointment.series_id) {
             const oldTime = new Date(originalAppointment.appointment_time);
             const newTime = new Date(appointment_time);
             
-            // Calcula a diferença em milissegundos
             const diffInMs = newTime.getTime() - oldTime.getTime();
             
-            // Se houve mudança real de tempo
             if (diffInMs !== 0) {
-                const diffInSeconds = diffInMs / 1000;
+                
+                const diffInSeconds = Math.round(diffInMs / 1000);
 
-                // Atualiza TODOS os agendamentos FUTUROS desta série
-                // A lógica DATE_ADD aplica o mesmo deslocamento (ex: +1 dia, +2 horas) para todos os subsequentes
                 await conn.query(
                     `UPDATE appointments 
                      SET appointment_time = DATE_ADD(appointment_time, INTERVAL ? SECOND)
                      WHERE series_id = ? 
-                       AND id != ? -- Não atualiza o atual (será feito abaixo individualmente ou pela lógica geral)
-                       AND appointment_time > ? -- Apenas os futuros em relação ao original
-                       AND status = 'Agendada'`, // Apenas os que ainda vão acontecer e não foram cancelados
+                       AND id != ? 
+                       AND appointment_time > ? 
+                       AND status = 'Agendada'`,
                     [diffInSeconds, originalAppointment.series_id, id, originalAppointment.appointment_time]
                 );
-                console.log(`[Admin] Série atualizada. Deslocamento de ${diffInSeconds} segundos aplicado aos eventos futuros da série ${originalAppointment.series_id}.`);
             }
         }
 
@@ -1430,7 +1449,7 @@ router.put('/professional/appointments/:id', protect, isProfissional, async (req
             const diffInMs = newTime.getTime() - oldTime.getTime();
             
             if (diffInMs !== 0) {
-                const diffInSeconds = diffInMs / 1000;
+               const diffInSeconds = Math.round(diffInMs / 1000);
 
                 await conn.query(
                     `UPDATE appointments 
@@ -1496,17 +1515,40 @@ router.put('/professional/appointments/:id', protect, isProfissional, async (req
 router.delete('/professional/appointments/:id', protect, isProfissional, async (req, res) => {
     const { id } = req.params;
     const { userId } = req.user;
+    const { delete_type } = req.query; // 'single' ou 'future'
+
     let conn;
     try {
         conn = await pool.getConnection();
+        await conn.beginTransaction(); // Necessário transação agora
 
         const [profProfile] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
-        if (!profProfile) return res.status(403).json({ message: 'Acesso negado.' });
+        if (!profProfile) {
+            await conn.rollback();
+            return res.status(403).json({ message: 'Acesso negado.' });
+        }
         
-        await conn.query('DELETE FROM appointments WHERE id = ? AND professional_id = ?', [id, profProfile.id]);
+        // Busca info para validar serie
+        const [appointment] = await conn.query("SELECT series_id, appointment_time FROM appointments WHERE id = ? AND professional_id = ?", [id, profProfile.id]);
+
+        if (!appointment) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Agendamento não encontrado.' });
+        }
+
+        if (delete_type === 'future' && appointment.series_id) {
+            await conn.query(
+                "DELETE FROM appointments WHERE series_id = ? AND professional_id = ? AND appointment_time >= ?",
+                [appointment.series_id, profProfile.id, appointment.appointment_time]
+            );
+        } else {
+            await conn.query('DELETE FROM appointments WHERE id = ? AND professional_id = ?', [id, profProfile.id]);
+        }
         
-        res.json({ message: 'Agendamento removido com sucesso.' });
+        await conn.commit();
+        res.json({ message: 'Agendamento(s) removido(s) com sucesso.' });
     } catch (error) {
+        if (conn) await conn.rollback();
         console.error("Erro ao remover agendamento:", error);
         res.status(500).json({ message: 'Erro ao remover agendamento.' });
     } finally {
