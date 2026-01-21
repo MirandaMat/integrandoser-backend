@@ -124,6 +124,38 @@ router.get('/role/professionals', protect, isAdmin, async (req, res) => {
     }
 });
 
+// Atualizar valor padrão da consulta do paciente
+router.patch('/professional/patient/:patientId/value', protect, isProfissional, async (req, res) => {
+    const { patientId } = req.params;
+    const { new_value } = req.body;
+    const { userId } = req.user;
+
+    if (new_value === undefined) return res.status(400).json({ message: "Valor inválido." });
+
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        if (!prof) return res.status(403).json({ message: 'Acesso negado.' });
+
+        // Atualiza o valor das próximas consultas AGENDADAS deste paciente com este profissional
+        // Isso simula a "atualização do valor contratado"
+        await conn.query(
+            `UPDATE appointments 
+             SET session_value = ? 
+             WHERE patient_id = ? AND professional_id = ? AND status = 'Agendada' AND appointment_time > NOW()`,
+            [new_value, patientId, prof.id]
+        );
+
+        res.json({ message: 'Valor atualizado para os próximos agendamentos.' });
+    } catch (error) {
+        console.error("Erro ao atualizar valor da consulta:", error);
+        res.status(500).json({ message: 'Erro ao atualizar valor.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
 // ROTA PARA O PROFISSIONAL BUSCAR SEUS PACIENTES E EMPRESAS
 router.get('/my-associates', [protect, isProfissional], async (req, res) => {
     const { userId } = req.user;
@@ -136,7 +168,7 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
         }
         const professionalId = profProfileRows[0].id;
 
-        // Query modificada para incluir o email, status E imagem_url do paciente
+        // Query COMPLEXA para buscar métricas financeiras e de datas
         const patientsQuery = `
             SELECT DISTINCT 
                 p.id, 
@@ -145,9 +177,28 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
                 p.cpf, 
                 p.telefone, 
                 p.data_nascimento, 
-                p.imagem_url, -- <-- CAMPO DE IMAGEM ADICIONADO
+                p.imagem_url,
+                p.created_at, -- Data do Ingresso
                 u.email,
-                u.status
+                u.status,
+                
+                -- Total de Sessões Realizadas (Concluídas)
+                (SELECT COUNT(*) 
+                 FROM appointments a 
+                 WHERE a.patient_id = p.id AND a.professional_id = ? AND a.status = 'Concluída') as total_sessions,
+
+                -- Valor da Última Consulta (Base para edição)
+                (SELECT session_value 
+                 FROM appointments a 
+                 WHERE a.patient_id = p.id AND a.professional_id = ? 
+                 ORDER BY a.appointment_time DESC LIMIT 1) as current_value,
+
+                -- Data da Última Sessão (Usada como referência de reajuste/atividade)
+                (SELECT appointment_time 
+                 FROM appointments a 
+                 WHERE a.patient_id = p.id AND a.professional_id = ? 
+                 ORDER BY a.appointment_time DESC LIMIT 1) as last_session_date
+
             FROM patients p
             JOIN users u ON p.user_id = u.id
             LEFT JOIN appointments a ON p.id = a.patient_id
@@ -155,7 +206,14 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
             ORDER BY p.nome ASC;
         `;
         
-        const patients = await conn.query(patientsQuery, [professionalId, professionalId]);
+        // Passamos professionalId 5 vezes para preencher os ? das subqueries e do WHERE principal
+        const patients = await conn.query(patientsQuery, [
+            professionalId, 
+            professionalId, 
+            professionalId, 
+            professionalId, 
+            professionalId
+        ]);
 
         const companies = await conn.query(
             `SELECT DISTINCT c.id, c.user_id, c.nome_empresa FROM companies c
