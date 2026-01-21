@@ -24,17 +24,18 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
     try {
         conn = await pool.getConnection();
 
-        // 1. Consultas normais (ADICIONADO: appointment_time, IDs e valores)
+        // 1. Consultas normais 
         const appointmentsQuery = `
             SELECT 
                 a.id, a.id as original_id,
+                a.series_id, 
                 CONCAT('Consulta: ', pat.nome, ' com ', prof.nome) as title,
                 a.appointment_time as start,
-                a.appointment_time, -- Necessário para o Modal
+                a.appointment_time, 
                 a.status,
-                a.session_value,    -- Necessário para o Modal
-                a.patient_id,       -- Necessário para o Modal
-                a.professional_id,  -- Necessário para o Modal
+                a.session_value,    
+                a.patient_id,       
+                a.professional_id,  
                 'consulta' as type,
                 prof.nome as professional_name,
                 pat.nome as patient_name,
@@ -117,17 +118,18 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
         }
         const professionalId = profProfile.id;
 
-        // 2. Consultas (ADICIONADO: appointment_time, IDs e valores)
+        // 2. Consultas 
         const queryAppointments = `
             SELECT 
                 a.id, a.id as original_id,
+                a.series_id, -- <<< CAMPO ESSENCIAL PARA O MODAL DE EXCLUSÃO
                 CONCAT('Consulta: ', p.nome) as title,
                 a.appointment_time as start,
-                a.appointment_time, -- Necessário para o Modal
+                a.appointment_time, 
                 a.status,
-                a.session_value,    -- Necessário para o Modal
-                a.patient_id,       -- Necessário para o Modal
-                a.professional_id,  -- Necessário para o Modal
+                a.session_value,    
+                a.patient_id,       
+                a.professional_id,  
                 'consulta' as type,
                 p.nome as patient_name,
                 p.imagem_url as patient_photo
