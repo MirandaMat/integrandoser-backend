@@ -18,7 +18,7 @@ const loginLimiter = rateLimit({
     legacyHeaders: false, // Desabilita os headers antigos `X-RateLimit-*`
 });
 
-router.post('/login', loginLimiter, async (req, res) => { // <--- ADICIONE O MIDDLEWARE AQUI
+router.post('/login', loginLimiter, async (req, res) => { 
   const { email, password } = req.body;
 
   if (!email || !password) {

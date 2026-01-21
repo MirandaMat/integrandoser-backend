@@ -2,7 +2,6 @@
 const express = require('express');
 const pool = require('../config/db.js');
 const { protect, isAdmin, isProfissional } = require('../middleware/authMiddleware.js');
-// CORREÇÃO: Importando a função correta
 const { sendSchedulingEmail, sendInvoiceNotificationEmail } = require('../config/mailer.js'); 
 const { createNotification } = require('../services/notificationService.js');
 const router = express.Router();
@@ -482,7 +481,43 @@ router.put('/appointments/:id', protect, isAdmin, async (req, res) => {
         conn = await pool.getConnection();
         await conn.beginTransaction();
 
-        // NOVO: Lógica para construir a query de atualização dinamicamente
+        // 1. Busca o agendamento original COMPLETO antes de alterar
+        const [originalAppointment] = await conn.query("SELECT * FROM appointments WHERE id = ?", [id]);
+        
+        if (!originalAppointment) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Agendamento não encontrado.' });
+        }
+
+        // --- LÓGICA DE SÉRIE ---
+        // Se houver alteração de horário e o agendamento fizer parte de uma série
+        if (appointment_time && originalAppointment.series_id) {
+            const oldTime = new Date(originalAppointment.appointment_time);
+            const newTime = new Date(appointment_time);
+            
+            // Calcula a diferença em milissegundos
+            const diffInMs = newTime.getTime() - oldTime.getTime();
+            
+            // Se houve mudança real de tempo
+            if (diffInMs !== 0) {
+                const diffInSeconds = diffInMs / 1000;
+
+                // Atualiza TODOS os agendamentos FUTUROS desta série
+                // A lógica DATE_ADD aplica o mesmo deslocamento (ex: +1 dia, +2 horas) para todos os subsequentes
+                await conn.query(
+                    `UPDATE appointments 
+                     SET appointment_time = DATE_ADD(appointment_time, INTERVAL ? SECOND)
+                     WHERE series_id = ? 
+                       AND id != ? -- Não atualiza o atual (será feito abaixo individualmente ou pela lógica geral)
+                       AND appointment_time > ? -- Apenas os futuros em relação ao original
+                       AND status = 'Agendada'`, // Apenas os que ainda vão acontecer e não foram cancelados
+                    [diffInSeconds, originalAppointment.series_id, id, originalAppointment.appointment_time]
+                );
+                console.log(`[Admin] Série atualizada. Deslocamento de ${diffInSeconds} segundos aplicado aos eventos futuros da série ${originalAppointment.series_id}.`);
+            }
+        }
+
+        // Lógica para construir a query de atualização dinamicamente
         const fieldsToUpdate = [];
         const values = [];
 
@@ -503,20 +538,13 @@ router.put('/appointments/:id', protect, isAdmin, async (req, res) => {
             values.push(session_value);
         }
 
-        // NOVO: Validação para garantir que pelo menos um campo foi enviado para atualização
+        // Validação para garantir que pelo menos um campo foi enviado para atualização
         if (fieldsToUpdate.length === 0 && company_id === undefined) {
             await conn.rollback();
             return res.status(400).json({ message: 'Nenhum campo para atualizar foi fornecido.' });
         }
 
-        // NOVO: Busca o agendamento original para garantir que temos os dados para as notificações
-        const [originalAppointment] = await conn.query("SELECT professional_id, patient_id FROM appointments WHERE id = ?", [id]);
-        if (!originalAppointment) {
-            await conn.rollback();
-            return res.status(404).json({ message: 'Agendamento não encontrado.' });
-        }
-
-        // Executa a atualização apenas se houver campos na tabela 'appointments' para alterar
+        // Executa a atualização do agendamento ATUAL
         if (fieldsToUpdate.length > 0) {
             const setClause = fieldsToUpdate.join(', ');
             const query = `UPDATE appointments SET ${setClause} WHERE id = ?`;
@@ -532,17 +560,17 @@ router.put('/appointments/:id', protect, isAdmin, async (req, res) => {
         
         await conn.commit();
 
-        // Lógica de notificação aprimorada
+        // Lógica de notificação (Mantida igual)
         const finalPatientId = patient_id !== undefined ? patient_id : originalAppointment.patient_id;
         const finalProfId = professional_id !== undefined ? professional_id : originalAppointment.professional_id;
-        const finalAppointmentTime = appointment_time || new Date(); // Usa o novo horário ou data atual como fallback para a mensagem
+        const finalAppointmentTime = appointment_time || new Date(); 
 
         const [patientUser] = await conn.query("SELECT user_id FROM patients WHERE id = ?", [finalPatientId]);
         const [profUser] = await conn.query("SELECT user_id FROM professionals WHERE id = ?", [finalProfId]);
         const appointmentDate = new Date(finalAppointmentTime).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 
         if (patientUser && patientUser.user_id) {
-            await createNotification(req, patientUser.user_id, 'appointment_rescheduled', `Seu agendamento foi alterado para ${appointmentDate}.`, '/paciente/agenda');
+            await createNotification(req, patientUser.user_id, 'appointment_rescheduled', `Seu agendamento (e série futura, se aplicável) foi alterado para ${appointmentDate}.`, '/paciente/agenda');
         }
         if (profUser && profUser.user_id) {
             await createNotification(req, profUser.user_id, 'appointment_rescheduled', `Um agendamento foi alterado para ${appointmentDate}. Verifique sua agenda.`, '/professional/agenda');
@@ -600,7 +628,7 @@ router.get('/my-appointments/company', protect, async (req, res) => {
         }
         const companyId = companies[0].id;
 
-        // Query CORRIGIDA: Busca os agendamentos (appointments) dos pacientes da empresa
+        // Query Busca os agendamentos (appointments) dos pacientes da empresa
         const query = `
             SELECT 
                 a.id, a.appointment_time, a.status,
@@ -1382,7 +1410,43 @@ router.put('/professional/appointments/:id', protect, isProfissional, async (req
         }
         const professionalId = profProfile.id;
 
-        // 2. Query de atualização direta e robusta (sem construção dinâmica)
+        // 2. Buscar o agendamento original para pegar o series_id e a hora antiga
+        // Verifica também se o agendamento pertence a este profissional (segurança)
+        const [originalApp] = await conn.query(
+            "SELECT * FROM appointments WHERE id = ? AND professional_id = ?", 
+            [id, professionalId]
+        );
+
+        if (!originalApp) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Agendamento não encontrado ou sem permissão.' });
+        }
+
+        // Se o agendamento faz parte de uma série, atualiza os futuros
+        if (originalApp.series_id) {
+            const oldTime = new Date(originalApp.appointment_time);
+            const newTime = new Date(appointment_time);
+            
+            const diffInMs = newTime.getTime() - oldTime.getTime();
+            
+            if (diffInMs !== 0) {
+                const diffInSeconds = diffInMs / 1000;
+
+                await conn.query(
+                    `UPDATE appointments 
+                     SET appointment_time = DATE_ADD(appointment_time, INTERVAL ? SECOND)
+                     WHERE series_id = ? 
+                       AND professional_id = ? 
+                       AND id != ? 
+                       AND appointment_time > ? 
+                       AND status = 'Agendada'`,
+                    [diffInSeconds, originalApp.series_id, professionalId, id, originalApp.appointment_time]
+                );
+                console.log(`[Profissional] Série atualizada. Deslocamento de ${diffInSeconds}s aplicado.`);
+            }
+        }
+
+        // 3. Query de atualização direta e robusta para o agendamento ATUAL
         const query = `
             UPDATE appointments SET 
                 patient_id = ?, 
@@ -1391,23 +1455,17 @@ router.put('/professional/appointments/:id', protect, isProfissional, async (req
             WHERE id = ? AND professional_id = ?
         `;
         
-        const result = await conn.query(query, [
+        await conn.query(query, [
             patient_id,
             appointment_time,
-            session_value || null, // Garante que o valor seja nulo se não for fornecido
+            session_value || null,
             id,
             professionalId
         ]);
 
-        // 3. Verifica se a atualização foi bem-sucedida
-        if (result.affectedRows === 0) {
-            await conn.rollback();
-            return res.status(404).json({ message: 'Agendamento não encontrado ou você não tem permissão para editá-lo.' });
-        }
-        
         await conn.commit();
         
-        // 4. Lógica de notificação para o paciente (opcional, mas recomendado)
+        // 4. Lógica de notificação para o paciente
         try {
             const [patientUser] = await conn.query("SELECT user_id FROM patients WHERE id = ?", [patient_id]);
             if (patientUser && patientUser.user_id) {
@@ -1416,7 +1474,7 @@ router.put('/professional/appointments/:id', protect, isProfissional, async (req
                     req,
                     patientUser.user_id,
                     'appointment_rescheduled',
-                    `Seu agendamento foi alterado para ${appointmentDate} pelo seu profissional.`,
+                    `Seu agendamento foi alterado para ${appointmentDate} pelo seu profissional. (Eventos futuros da série também foram ajustados).`,
                     '/paciente/agenda'
                 );
             }
