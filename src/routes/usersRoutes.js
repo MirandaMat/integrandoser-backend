@@ -143,11 +143,24 @@ router.patch('/professional/patient/:patientId/value', protect, isProfissional, 
         if (!profRows || profRows.length === 0) return res.status(403).json({ message: 'Acesso negado.' });
         const prof = profRows[0];
 
-        // Atualiza o valor das próximas consultas AGENDADAS
+        // A) ATUALIZA O PERFIL (Contrato Padrão)
+        // Garante que novos agendamentos criados futuramente peguem esse valor.
+        // Requer a coluna 'session_price' na tabela 'patients'
+        await conn.query(
+            `UPDATE patients SET session_price = ? WHERE id = ?`,
+            [new_value, patientId]
+        );
+
+        // B) ATUALIZA A TABELA 'appointments' (Agenda Futura)
+        // Altera a coluna session_value dos agendamentos que ainda não aconteceram
         await conn.query(
             `UPDATE appointments 
              SET session_value = ? 
-             WHERE patient_id = ? AND professional_id = ? AND status = 'Agendada' AND appointment_time > NOW()`,
+             WHERE patient_id = ? 
+               AND professional_id = ? 
+               AND status = 'Agendada' 
+               AND appointment_time > NOW()
+               AND package_invoice_id IS NULL`, // Não altera se já estiver faturado
             [new_value, patientId, prof.id]
         );
 
@@ -176,7 +189,6 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
         
         const professionalId = profProfileRows[0].id;
 
-        // Query COMPLEXA para buscar métricas financeiras e de datas
         const patientsQuery = `
             SELECT DISTINCT 
                 p.id, 
@@ -188,24 +200,27 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
                 p.imagem_url,
                 p.billing_type,      
                 p.billing_due_day,
+                p.session_price, -- Valor do contrato
                 u.created_at, 
                 u.email,
                 u.status,
                 
-                -- Total de Sessões Realizadas (Concluídas)
                 (SELECT COUNT(*) 
                  FROM appointments a 
                  WHERE a.patient_id = p.id AND a.professional_id = ? AND a.status = 'Concluída') as total_sessions,
 
-                -- Valor da Última Consulta (Base para edição) - COALESCE para evitar null
+                -- Lógica Prioritária: 
+                -- 1. Tenta pegar o 'session_price' (contrato no perfil)
+                -- 2. Se for nulo/zero, tenta pegar o valor da última sessão agendada/concluída
+                -- 3. Se não tiver nada, retorna 0
                 COALESCE(
+                    NULLIF(p.session_price, 0),
                     (SELECT session_value 
                      FROM appointments a 
                      WHERE a.patient_id = p.id AND a.professional_id = ? 
                      ORDER BY a.appointment_time DESC LIMIT 1), 
                 0) as current_value,
 
-                -- Data da Última Sessão
                 (SELECT appointment_time 
                  FROM appointments a 
                  WHERE a.patient_id = p.id AND a.professional_id = ? 
@@ -907,7 +922,7 @@ router.put('/professional/patient/:patientId', protect, isProfissional, async (r
         // 3. ATUALIZAR OS DADOS DO PERFIL (tabela patients)
         const allowedPatientFields = ['nome', 'cpf', 'telefone', 'data_nascimento', 'billing_type', 'billing_due_day'];
         const fieldsToUpdate = allowedPatientFields.filter(field => profileData[field] !== undefined);
-        
+
         let profileUpdated = false;
         if (fieldsToUpdate.length > 0) {
             const setClause = fieldsToUpdate.map(field => `${field} = ?`).join(', ');
