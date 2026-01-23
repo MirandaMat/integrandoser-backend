@@ -1596,6 +1596,7 @@ router.get('/:userId/linked-patients', protect, isAdmin, async (req, res) => {
         const query = `
             SELECT DISTINCT 
                 p.id, 
+                p.user_id, 
                 p.nome, 
                 p.imagem_url
             FROM patients p
