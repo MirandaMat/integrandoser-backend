@@ -1143,7 +1143,7 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
 
 // ========== Profissional Habilitado ============
 
-// ROTA ADAPTADA: Busca de usuários para o modal do profissional
+// CORRECAO: Busca de usuários para o modal do profissional
 router.get('/users-for-professional-agenda', protect, isProfissional, async (req, res) => {
     const { userId } = req.user;
     let conn;
@@ -1158,8 +1158,9 @@ router.get('/users-for-professional-agenda', protect, isProfissional, async (req
         const professionalId = profProfile.id;
 
         // 2. Buscar pacientes associados a este profissional
+        // ALTERAÇÃO AQUI: Adicionado p.session_price como current_value
         const patientsQuery = `
-            SELECT DISTINCT p.id, p.nome 
+            SELECT DISTINCT p.id, p.nome, p.session_price as current_value
             FROM patients p
             LEFT JOIN appointments a ON p.id = a.patient_id
             WHERE a.professional_id = ? OR p.created_by_professional_id = ?
@@ -1177,7 +1178,6 @@ router.get('/users-for-professional-agenda', protect, isProfissional, async (req
         );
 
         res.json({
-            // O profissional é o próprio usuário logado
             professionals: [{id: professionalId, nome: 'Eu mesmo'}],
             patients: serializeBigInts(patientsRows),
             companies: serializeBigInts(companiesRows),
