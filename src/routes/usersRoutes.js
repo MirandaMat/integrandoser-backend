@@ -567,7 +567,7 @@ router.post('/', protect, isAdmin, upload.single('imagem_perfil'), async (req, r
             case '2':
                 tableName = 'professionals';
                 // CORREÇÃO: 'fixed_fee' adicionado na lista de campos permitidos
-                fields = ['user_id', 'nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url', 'fixed_fee'];
+                fields = ['user_id', 'nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url', 'fixed_fee', 'commission_rate', 'billing_due_day'];
                 break;
             case '3':
                 tableName = 'patients';
@@ -651,7 +651,7 @@ router.put('/:id', protect, isAdmin, upload.single('imagem_perfil'), async (req,
             case 'PROFISSIONAL':
                 tableName = 'professionals';
                 // CORREÇÃO: 'fixed_fee' adicionado na lista de campos permitidos para atualização
-                allFields = ['nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url', 'fixed_fee'];
+                allFields = ['nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url', 'fixed_fee', 'commission_rate', 'billing_due_day'];
                 break;
             case 'PACIENTE':
                 tableName = 'patients';
