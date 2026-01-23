@@ -3,6 +3,7 @@ const cron = require('node-cron');
 const pool = require('../config/db');
 const crypto = require('crypto');
 const { sendAppointmentReminder } = require('../config/mailer');
+const { sendWhatsAppReminder } = require('../config/whatsapp.js');
 
 // Base URL of your frontend
 const FRONTEND_URL = 'https://integrandoser.com.br' || 'http://localhost:5173';
@@ -18,7 +19,7 @@ const initScheduledJobs = () => {
             // Find appointments happening between 23h and 25h from now that haven't been confirmed yet
             // and don't have a token generated (avoid spamming)
             const query = `
-                SELECT a.id, a.appointment_time, u.email, p.nome, a.professional_id
+                SELECT a.id, a.appointment_time, u.email, u.telefone, p.nome, a.professional_id
                 FROM appointments a
                 JOIN patients p ON a.patient_id = p.id
                 JOIN users u ON p.user_id = u.id
@@ -44,10 +45,19 @@ const initScheduledJobs = () => {
                 // Send Email
                 await sendAppointmentReminder(app.email, app.nome, app.appointment_time, confirmLink, rescheduleLink);
                 
-                // LOGIC FOR WHATSAPP (Simulation)
-                // Since we don't have a configured WhatsApp provider code here, we log the message.
-                // In a real scenario, you would call `twilioClient.messages.create(...)` here.
-                console.log(`[WhatsApp Simulation] Send to ${app.nome}: "Olá! Confirme sua consulta: ${confirmLink} ou Reagende: ${rescheduleLink}"`);
+                // --- NOVO: Envia WhatsApp ---
+                if (app.telefone) {
+                    console.log(`[Cron] Enviando WhatsApp para ${app.nome}...`);
+                    await sendWhatsAppReminder(
+                        app.telefone,
+                        app.nome,
+                        app.appointment_time,
+                        confirmLink, 
+                        rescheduleLink
+                    );
+                }
+            
+            
             }
 
         } catch (error) {

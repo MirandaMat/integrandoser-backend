@@ -3,6 +3,7 @@ const express = require('express');
 const pool = require('../config/db.js');
 const { protect, isAdmin, isProfissional } = require('../middleware/authMiddleware.js');
 const { sendSchedulingEmail, sendInvoiceNotificationEmail, sendSessionScheduledEmail } = require('../config/mailer.js');
+const { sendWhatsAppConfirmation, sendWhatsAppRescheduled } = require('../config/whatsapp.js');
 const { createNotification } = require('../services/notificationService.js');
 const router = express.Router();
 
@@ -350,6 +351,15 @@ router.post('/create-appointment', protect, isAdmin, async (req, res) => {
                         professionalName,
                         new Date(appointment_times[0])
                     );
+                    // --- NOVO: Envio de WhatsApp ---
+                    if (patientUser.telefone) {
+                        await sendWhatsAppConfirmation(
+                            patientUser.telefone,
+                            patientUser.nome,
+                            professionalName,
+                            new Date(appointment_times[0])
+                        );
+                    }
                 } catch (emailError) {
                     console.error("AVISO: Agendamento (Admin) criado, mas e-mail de confirmação falhou.", emailError);
                 }
@@ -504,6 +514,22 @@ router.put('/appointments/:id', protect, isAdmin, async (req, res) => {
 
         if (patientUser && patientUser.user_id) {
             await createNotification(req, patientUser.user_id, 'appointment_rescheduled', `Seu agendamento (e série futura, se aplicável) foi alterado para ${appointmentDate}.`, '/paciente/agenda');
+        
+            // --- NOVO: Envio de WhatsApp para reagendamento ---
+            // Envia WhatsApp se tiver telefone
+            const [userPhoneData] = await conn.query("SELECT telefone, nome FROM users u JOIN patients p ON p.user_id = u.id WHERE u.id = ?", [patientUser.user_id]);
+            
+            // Precisamos pegar o nome do profissional também se não tivermos
+            const [profNameData] = await conn.query("SELECT nome FROM professionals WHERE id = ?", [finalProfId]);
+            
+            if (userPhoneData && userPhoneData.telefone && profNameData) {
+                await sendWhatsAppRescheduled(
+                    userPhoneData.telefone,
+                    userPhoneData.nome, // Nome Paciente
+                    profNameData.nome,  // Nome Profissional
+                    new Date(finalAppointmentTime)
+                );
+            }
         }
         if (profUser && profUser.user_id) {
             await createNotification(req, profUser.user_id, 'appointment_rescheduled', `Um agendamento foi alterado para ${appointmentDate}. Verifique sua agenda.`, '/professional/agenda');
@@ -1267,7 +1293,16 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
                         professionalName, 
                         new Date(appointment_times[0])
                     );
-                    } catch (e) { console.error("Erro email agendamento:", e); }
+                    // --- NOVO: Envio de WhatsApp ---
+                    if (patientUser.telefone) {
+                        await sendWhatsAppConfirmation(
+                            patientUser.telefone,
+                            patientUser.nome,
+                            professionalName,
+                            new Date(appointment_times[0])
+                        );
+                    }
+                } catch (e) { console.error("Erro email agendamento:", e); }
             }
         }
         
@@ -1372,6 +1407,19 @@ router.put('/professional/appointments/:id', protect, isProfissional, async (req
                     `Seu agendamento foi alterado para ${appointmentDate} pelo seu profissional. (Eventos futuros da série também foram ajustados).`,
                     '/paciente/agenda'
                 );
+
+                // Busca dados para o WhatsApp
+                const [fullPatientData] = await conn.query("SELECT u.telefone, p.nome FROM patients p JOIN users u ON p.user_id = u.id WHERE u.id = ?", [patientUser.user_id]);
+                const [profData] = await conn.query("SELECT nome FROM professionals WHERE id = ?", [professionalId]);
+
+                if (fullPatientData && fullPatientData.telefone) {
+                    await sendWhatsAppRescheduled(
+                        fullPatientData.telefone,
+                        fullPatientData.nome,
+                        profData.nome,
+                        new Date(appointment_time)
+                    );
+                }
             }
         } catch (notificationError) {
             console.error("AVISO: Agendamento atualizado, mas a notificação falhou:", notificationError);
