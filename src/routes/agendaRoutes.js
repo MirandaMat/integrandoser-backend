@@ -1409,7 +1409,7 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
 // Rota para o PROFISSIONAL HABILITADO criar um ou mais agendamentos
 router.post('/professional/appointments', protect, isProfissional, async (req, res) => {
     const { 
-        professional_id, 
+        // professional_id,
         patient_id, 
         company_id, 
         frequency, 
@@ -1417,7 +1417,7 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
         is_package, 
         discount_percentage, 
         total_value,
-        sessionValue // <--- CORREÇÃO: Recebe 'sessionValue' (camelCase) do frontend
+        sessionValue 
     } = req.body;
 
     const { userId } = req.user;
@@ -1425,8 +1425,9 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
     // Se sessionValue vier vazio ou undefined, garantimos que seja 0 ou null
     const finalSessionValue = sessionValue ? parseFloat(sessionValue) : 0;
 
-    if (!professional_id || !patient_id || !appointment_times || !Array.isArray(appointment_times) || appointment_times.length === 0) {
-        return res.status(400).json({ message: 'Profissional, paciente e pelo menos uma data são obrigatórios.' });
+    // ALTERAÇÃO: Removido professional_id da validação inicial
+    if (!patient_id || !appointment_times || !Array.isArray(appointment_times) || appointment_times.length === 0) {
+        return res.status(400).json({ message: 'Paciente e pelo menos uma data são obrigatórios.' });
     }
 
     let conn;
@@ -1434,18 +1435,21 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
         conn = await pool.getConnection();
         await conn.beginTransaction();
 
-        const [profProfile] = await conn.query("SELECT id, nome, level FROM professionals WHERE user_id = ? AND id = ?", [userId, professional_id]);
+        // 1. BUSCA AUTOMÁTICA DO ID DO PROFISSIONAL PELO TOKEN
+        const [profProfile] = await conn.query("SELECT id, nome, level FROM professionals WHERE user_id = ?", [userId]);
         
         if (!profProfile || !['Profissional Habilitado', 'Profissional Escola'].includes(profProfile.level)) {
             await conn.rollback();
-            return res.status(403).json({ message: 'Ação não autorizada.' });
+            return res.status(403).json({ message: 'Ação não autorizada ou perfil não encontrado.' });
         }
+        
+        const professionalId = profProfile.id; // <-- ID DERIVADO DO TOKEN (SEGURO)
         const professionalName = profProfile.nome;
 
         if (company_id) {
             await conn.query('UPDATE patients SET company_id = ? WHERE id = ?', [company_id, patient_id]);
         }
-        await conn.query('INSERT IGNORE INTO professional_assignments (professional_id, patient_id) VALUES (?, ?)', [professional_id, patient_id]);
+        await conn.query('INSERT IGNORE INTO professional_assignments (professional_id, patient_id) VALUES (?, ?)', [professionalId, patient_id]);
         
         const appointmentsToCreate = [];
         const initialDate = new Date(appointment_times[0]);
@@ -1461,7 +1465,6 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
         if (is_package && total_value > 0) {
             newStatus = 'Aguardando Pagamento';
             
-            // ... (Lógica de identificação do pagador mantida igual) ...
             const [patientDetails] = await conn.query("SELECT user_id, company_id, nome FROM patients WHERE id = ?", [patient_id]);
             if (patientDetails) {
                 if (patientDetails.company_id) {
@@ -1495,32 +1498,35 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
         }
 
         // --- PREPARAÇÃO DOS AGENDAMENTOS ---
+        // ALTERAÇÃO: Usando a variável 'professionalId' derivada do token
         if (frequency === 'Evento Único' || is_package) {
             appointment_times.forEach(time => {
                 appointmentsToCreate.push({
                     series_id: null,
-                    professional_id: professional_id,
+                    professional_id: professionalId, 
                     patient_id: patient_id,
                     appointment_time: time,
-                    session_value: finalSessionValue, // <--- USA O VALOR CORRIGIDO
+                    session_value: finalSessionValue,
                     status: newStatus,
                     package_invoice_id: newPackageInvoiceId
                 });
             });
         } else { 
              // Lógica recorrente
-             const seriesResult = await conn.query('INSERT INTO appointment_series (professional_id, patient_id, start_date, frequency, session_value) VALUES (?, ?, ?, ?, ?)', [professional_id, patient_id, initialDate, frequency, finalSessionValue]);
+             const seriesResult = await conn.query('INSERT INTO appointment_series (professional_id, patient_id, start_date, frequency, session_value) VALUES (?, ?, ?, ?, ?)', [professionalId, patient_id, initialDate, frequency, finalSessionValue]);
              const newSeriesId = seriesResult.insertId;
              let currentDate = initialDate;
              const endDate = new Date();
-             endDate.setMonth(initialDate.getMonth() + 3); // 3 meses de recorrência
+             endDate.setMonth(initialDate.getMonth() + 3); 
              const increment = (frequency === 'Semanalmente') ? 7 : 14;
              
              while (currentDate <= endDate) {
                  appointmentsToCreate.push({ 
-                     series_id: newSeriesId, professional_id, patient_id, 
+                     series_id: newSeriesId, 
+                     professional_id: professionalId, 
+                     patient_id, 
                      appointment_time: new Date(currentDate), 
-                     session_value: finalSessionValue, // <--- USA O VALOR CORRIGIDO
+                     session_value: finalSessionValue,
                      status: newStatus,
                      package_invoice_id: null
                  });
@@ -1540,7 +1546,7 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
         
         await conn.commit();
 
-        // --- NOTIFICAÇÕES (MANTIDAS) ---
+        // --- NOTIFICAÇÕES ---
         if (is_package && recipientUserId) {
             try {
                 await createNotification(req, recipientUserId, 'new_invoice', `Nova cobrança de pacote (${professionalName}) no valor de ${total_value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`, `/${recipientType}/financeiro`);
