@@ -314,7 +314,8 @@ router.get('/:id', protect, async (req, res) => {
     try {
         conn = await pool.getConnection();
 
-        const users = await conn.query('SELECT id, email, role_id, status FROM users WHERE id = ?', [id]);
+        // 1. Adicionado 'created_at' na busca do usuário
+        const users = await conn.query('SELECT id, email, role_id, status, created_at FROM users WHERE id = ?', [id]);
         if (!users || users.length === 0) {
             return res.status(404).json({ message: 'Usuário não encontrado.' });
         }
@@ -326,18 +327,36 @@ router.get('/:id', protect, async (req, res) => {
         }
         const role = roles[0];
         
-        let tableName;
-        switch (role.name) {
-            case 'ADM': tableName = 'administrators'; break;
-            case 'PROFISSIONAL': tableName = 'professionals'; break;
-            case 'PACIENTE': tableName = 'patients'; break;
-            case 'EMPRESA': tableName = 'companies'; break;
-            default: return res.status(400).json({ message: 'Papel inválido.' });
-        }
+        let profile = {};
 
-        // SELECT * garante que 'fixed_fee' venha do banco
-        const profiles = await conn.query(`SELECT * FROM ${tableName} WHERE user_id = ?`, [id]);
-        const profile = profiles.length > 0 ? profiles[0] : {};
+        // 2. Lógica específica para buscar dados extras baseados na role
+        if (role.name === 'PACIENTE') {
+            // Para pacientes: Busca perfil + contagem de sessões concluídas
+            const query = `
+                SELECT 
+                    p.*,
+                    (SELECT COUNT(*) FROM appointments a WHERE a.patient_id = p.id AND a.status = 'Concluída') as total_sessions
+                FROM patients p 
+                WHERE p.user_id = ?
+            `;
+            const profiles = await conn.query(query, [id]);
+            profile = profiles.length > 0 ? profiles[0] : {};
+
+        } else {
+            // Para outros perfis (mantém a lógica padrão dinâmica)
+            let tableName;
+            switch (role.name) {
+                case 'ADM': tableName = 'administrators'; break;
+                case 'PROFISSIONAL': tableName = 'professionals'; break;
+                case 'EMPRESA': tableName = 'companies'; break;
+                default: tableName = null;
+            }
+
+            if (tableName) {
+                const profiles = await conn.query(`SELECT * FROM ${tableName} WHERE user_id = ?`, [id]);
+                profile = profiles.length > 0 ? profiles[0] : {};
+            }
+        }
         
         const fullUser = {
             ...serializeBigInts(user),
