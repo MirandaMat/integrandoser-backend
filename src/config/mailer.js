@@ -325,6 +325,53 @@ const sendAppointmentReminder = async (to, name, appointmentTime, confirmLink, r
     }
 };
 
+const sendSessionScheduledEmail = async (to, patientName, professionalName, appointmentTime) => {
+    const formattedTime = new Date(appointmentTime).toLocaleString('pt-BR', {
+        dateStyle: 'full',
+        timeStyle: 'short'
+    });
+    
+    const subject = 'Confirmação de Agendamento - IntegrandoSer';
+    
+    const html = `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <h2>Olá, ${patientName}!</h2>
+            <p>Seu agendamento foi realizado com sucesso.</p>
+            
+            <div style="background-color: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                <p style="margin: 5px 0;"><strong>Profissional:</strong> ${professionalName}</p>
+                <p style="margin: 5px 0;"><strong>Data e Hora:</strong> ${formattedTime}</p>
+            </div>
+
+            <p>Para visualizar detalhes ou gerenciar seus agendamentos, acesse a plataforma:</p>
+            <p><a href="https://integrandoser.com.br/login" style="color: #8B5CF6; font-weight: bold;">Acessar Minha Agenda</a></p>
+            
+            <br>
+            <p>Atenciosamente,</p>
+            <p><strong>Equipe IntegrandoSer</strong></p>
+        </div>
+    `;
+
+    try {
+        // Assume que 'resend' e 'fromEmail' já estão declarados no topo do arquivo original
+        const { data, error } = await resend.emails.send({
+            from: `IntegrandoSer <${fromEmail}>`,
+            to: [to],
+            subject: subject,
+            html: html,
+        });
+
+        if (error) {
+            console.error(`Erro ao enviar e-mail de confirmação de sessão (Resend) para ${to}:`, error);
+            throw error;
+        }
+        console.log(`E-mail de confirmação de sessão enviado para ${to}. ID: ${data?.id}`);
+
+    } catch (error) {
+        console.error(`Falha ao tentar enviar e-mail de confirmação de sessão para ${to}:`, error);
+        // Não lançamos erro aqui para não travar a criação do agendamento, apenas logamos
+    }
+};
 
 
 // Exporta todas as funções adaptadas
@@ -336,5 +383,6 @@ module.exports = {
     sendInvoiceNotificationEmail,
     sendReceiptUploadNotificationEmail,
     sendPasswordResetEmail,
-    sendAppointmentReminder
+    sendAppointmentReminder,
+    sendSessionScheduledEmail
 };
