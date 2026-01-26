@@ -352,31 +352,7 @@ router.get('/transactions', [protect, isAdmin], async (req, res) => {
     }
 });
 
-/*
-router.get('/professionals-revenue', [protect, isAdmin], async (req, res) => {
-    try {
-        // A query agora busca da nova tabela, somando apenas os itens não faturados
-        const query = `
-            SELECT 
-                p.id as professional_id,
-                p.nome as professional_name,
-                u.id as user_id,
-                SUM(pb.gross_value) as total_revenue
-            FROM professional_billings pb
-            JOIN professionals p ON pb.professional_id = p.id
-            JOIN users u ON p.user_id = u.id
-            WHERE pb.status = 'unbilled'
-            GROUP BY p.id, p.nome, u.id
-            ORDER BY total_revenue DESC;
-        `;
-        const revenueByProfessional = await db.query(query); //
-        res.json(revenueByProfessional); //
-    } catch (error) { //
-        console.error('Error fetching revenue by professional:', error); //
-        res.status(500).json({ message: 'Erro ao buscar faturamento por profissional.' }); //
-    }
-});
-*/
+
 router.get('/professionals-revenue', [protect, isAdmin], async (req, res) => {
     try {
         const query = `
@@ -763,32 +739,7 @@ router.get('/invoices/pending-approval', [protect, isAdmin], async (req, res) =>
     }
 });
 
-/*
-router.patch('/invoices/:invoiceId/reject', [protect, isAdmin], async (req, res) => {
-    const { invoiceId } = req.params;
-    let conn; // Adicionado para poder usar o finally
-    try {
-        conn = await db.getConnection();
-        // Busca o comprovante atual
-        const [invoice] = await conn.query("SELECT receipt_url FROM invoices WHERE id = ?", [invoiceId]);
-        if (invoice && invoice.receipt_url) {
-            const filePath = path.join(__dirname, '../../', invoice.receipt_url);
-            // fs.unlink é assíncrono, o callback é uma boa prática
-            fs.unlink(filePath, err => {
-                if (err) console.warn('Aviso: Erro ao apagar arquivo de comprovante antigo:', err);
-            });
-        }
-        // Atualiza status e apaga comprovante
-        await conn.query("UPDATE invoices SET status = 'rejected', receipt_url = NULL WHERE id = ?", [invoiceId]);
-        res.json({ message: "Fatura rejeitada e comprovante apagado." });
-    } catch (error) {
-        console.error("Erro ao rejeitar fatura:", error);
-        res.status(500).json({ message: "Erro ao rejeitar fatura." });
-    } finally {
-        if (conn) conn.release(); // Adicionado para garantir a liberação da conexão
-    }
-});
-*/
+
 router.patch('/invoices/:invoiceId/reject', [protect], async (req, res) => {
     const { invoiceId } = req.params;
     const userId = req.user.id || req.user.userId;
@@ -980,71 +931,6 @@ router.get('/report/transactions', [protect, isAdmin], async (req, res) => {
         res.status(500).json({ message: 'Erro ao gerar relatório.' });
     }
 });
-/*
-router.post('/generate-commissions-for-all', [protect, isAdmin], async (req, res) => {
-    const commissionRate = 0.25; 
-    const { month, year } = req.body; 
-
-    if (!month || !year) {
-        return res.status(400).json({ message: 'Mês e ano são obrigatórios.' });
-    }
-    
-    let conn;
-    try {
-        conn = await db.getConnection();
-        await conn.beginTransaction();
-
-        const sessionsByProfessional = await conn.query(
-            `SELECT 
-                a.professional_id, 
-                p.user_id,
-                SUM(a.session_value) as total_revenue,
-                GROUP_CONCAT(a.id) as session_ids
-             FROM appointments a
-             JOIN professionals p ON a.professional_id = p.id
-             WHERE a.status = 'Concluída' 
-             AND a.session_value IS NOT NULL
-             AND MONTH(a.appointment_time) = ?
-             AND YEAR(a.appointment_time) = ?
-             GROUP BY a.professional_id, p.user_id`,
-            [month, year]
-        );
-
-        if (sessionsByProfessional.length === 0) {
-            await conn.rollback();
-            return res.status(200).json({ message: 'Nenhuma sessão concluída encontrada para este período. Nenhuma fatura gerada.' });
-        }
-
-        for (const prof of sessionsByProfessional) {
-            const commissionAmount = prof.total_revenue * commissionRate;
-            const dueDate = new Date(year, month, 10);
-
-            const description = `Comissão referente às sessões de ${month}/${year}.`;
-            
-            const invoiceResult = await conn.query(
-                'INSERT INTO invoices (user_id, amount, due_date, description, status) VALUES (?, ?, ?, ?, ?)',
-                [prof.user_id, commissionAmount, dueDate, description, 'pending']
-            );
-            const invoiceId = invoiceResult.insertId;
-
-            await conn.query(
-                "INSERT INTO transactions (invoice_id, user_id, amount, type, description) VALUES (?, ?, ?, ?, ?)",
-                [invoiceId, prof.user_id, commissionAmount, 'commission', description]
-            );
-        }
-
-        await conn.commit();
-        res.status(201).json({ message: 'Faturas de comissão geradas com sucesso!' });
-
-    } catch (error) {
-        if (conn) await conn.rollback();
-        console.error('Erro ao gerar faturas de comissão:', error);
-        res.status(500).json({ message: 'Erro ao gerar faturas.' });
-    } finally {
-        if (conn) conn.release();
-    }
-});
-*/
 
 
 router.post('/generate-commissions-for-all', [protect, isAdmin], async (req, res) => {
@@ -1230,58 +1116,6 @@ router.get('/professional/invoices-summary', [protect, isProfissional], async (r
 });
 
 // Rota para o profissional buscar as faturas que ele criou
-/*
-router.get('/professional/created-invoices', [protect, isProfissional], async (req, res) => {
-    const creatorUserId = req.user.id || req.user.userId;
-    try {
-        // LÓGICA AJUSTADA: Mesma regra (Pending + Paid sempre visíveis)
-        const query = `
-            (SELECT
-                i.id,
-                i.amount,
-                i.due_date,
-                i.description,
-                i.status,
-                i.receipt_url,
-                i.created_at,
-                COALESCE(p.nome, c.nome_empresa, u.email) as recipient_name
-            FROM invoices i
-            JOIN users u ON i.user_id = u.id
-            LEFT JOIN patients p ON u.id = p.user_id
-            LEFT JOIN companies c ON u.id = c.user_id
-            WHERE i.creator_user_id = ? 
-            AND i.status IN ('pending', 'paid')) -- Garante Pendentes E Pagos (Aguardando)
-
-            UNION
-
-            (SELECT
-                i.id,
-                i.amount,
-                i.due_date,
-                i.description,
-                i.status,
-                i.receipt_url,
-                i.created_at,
-                COALESCE(p.nome, c.nome_empresa, u.email) as recipient_name
-            FROM invoices i
-            JOIN users u ON i.user_id = u.id
-            LEFT JOIN patients p ON u.id = p.user_id
-            LEFT JOIN companies c ON u.id = c.user_id
-            WHERE i.creator_user_id = ?
-            ORDER BY i.created_at DESC
-            LIMIT 30) -- Garante histórico recente
-
-            ORDER BY created_at DESC
-        `;
-        
-        const invoices = await db.query(query, [creatorUserId, creatorUserId]);
-        res.json(serializeBigInts(invoices)); 
-    } catch (error) {
-        console.error("Erro ao buscar faturas criadas pelo profissional:", error);
-        res.status(500).json({ message: 'Erro ao buscar cobranças enviadas.' });
-    }
-});
-*/
 router.get('/professional/created-invoices', [protect, isProfissional], async (req, res) => {
     const creatorUserId = req.user.id || req.user.userId;
     try {
@@ -1940,35 +1774,6 @@ async function generatePixCharge(invoice) {
 
 
 // ROTA PARA O USUÁRIO PEGAR OS DETALHES DE PAGAMENTO DE UMA FATURA
-/*
-router.get('/invoices/:invoiceId/payment-details', protect, async (req, res) => {
-    const { invoiceId } = req.params;
-    const userId = req.user.id || req.user.userId;
-    let conn;
-    try {
-        conn = await db.getConnection();
-        const [invoice] = await conn.query("SELECT * FROM invoices WHERE id = ? AND user_id = ?", [invoiceId, userId]);
-        if (!invoice) return res.status(404).json({ message: "Fatura não encontrada ou não pertence a você." });
-
-        const sessionsDetails = await conn.query(
-            `SELECT t.transaction_date, t.amount, p.nome as patient_name
-            FROM transactions t
-            LEFT JOIN appointments a ON t.description LIKE CONCAT('%', a.professional_id, '%') AND t.description LIKE CONCAT('%', a.patient_id, '%')
-            LEFT JOIN patients p ON a.patient_id = p.id
-            WHERE t.invoice_id = ? AND t.type = 'commission'`,
-            [invoiceId]
-        );
-
-        const pixDetails = await generatePixCharge(invoice);
-        res.json({ invoice, pixDetails, sessionsDetails });
-    } catch (error) {
-        console.error("Erro ao buscar detalhes da fatura:", error);
-        res.status(500).json({ message: 'Erro ao buscar detalhes da fatura.' });
-    } finally {
-        if (conn) conn.release();
-    }
-});
-*/
 router.get('/invoices/:invoiceId/payment-details', protect, async (req, res) => {
     const { invoiceId } = req.params;
     const userId = req.user.id || req.user.userId;
@@ -2003,93 +1808,6 @@ router.get('/invoices/:invoiceId/payment-details', protect, async (req, res) => 
 });
 
 
-
-// ROTA PARA O USUÁRIO ENVIAR O COMPROVANTE
-/*
-router.post('/invoices/:invoiceId/upload-receipt', [protect, upload.single('receipt')], async (req, res) => {
-    const { invoiceId } = req.params;
-    const userId = req.user.id || req.user.userId;
-
-    // Verifica se o arquivo foi processado pelo Multer
-    if (!req.file) {
-        // O erro do Multer (tipo inválido, tamanho excedido) já foi tratado pelo middleware 'handleMulterError'
-        // Se chegou aqui sem req.file, é um erro inesperado.
-        console.error(`[RECEIPT UPLOAD] Erro inesperado: Middleware Multer não anexou o arquivo à requisição para fatura ${invoiceId}.`);
-        return res.status(500).json({ message: 'Erro ao processar o arquivo antes do upload.' });
-    }
-
-    // Verifica se o upload para GCS foi bem-sucedido (se gcsUrl existe)
-    if (!req.file.gcsUrl) { // <<< VERIFICAÇÃO ESSENCIAL PARA GCS
-        console.error(`[RECEIPT UPLOAD] Arquivo ${req.file.originalname} recebido para fatura ${invoiceId}, mas URL GCS não encontrada. Falha no upload GCS.`);
-        return res.status(500).json({ message: 'Erro ao fazer upload do comprovante para o armazenamento seguro. Tente novamente.' });
-    }
-
-    let conn;
-    try {
-        conn = await db.getConnection();
-        const receiptUrl = req.file.gcsUrl; // <<< USA A URL CORRETA DO GCS
-
-        // 1. Atualiza a fatura no banco de dados
-        await conn.query("UPDATE invoices SET receipt_url = ?, status = 'paid' WHERE id = ? AND user_id = ?", [receiptUrl, invoiceId, userId]); // <<< Salva a URL do GCS
-
-        // 2. Busca a fatura recém-atualizada para obter todos os dados necessários
-        const [updatedInvoice] = await conn.query("SELECT * FROM invoices WHERE id = ?", [invoiceId]);
-
-        // 3. Bloco de notificação (em tempo real e por e-mail)
-        if (updatedInvoice && updatedInvoice.creator_user_id) {
-            // Busca o nome de quem enviou o comprovante
-            const [uploaderProfile] = await conn.query(`SELECT COALESCE(p.nome, prof.nome, c.nome_empresa, a.nome) as name FROM users u LEFT JOIN patients p ON u.id = p.user_id LEFT JOIN professionals prof ON u.id = prof.user_id LEFT JOIN companies c ON u.id = c.user_id LEFT JOIN administrators a ON u.id = a.user_id WHERE u.id = ?`, [userId]);
-            const uploaderName = uploaderProfile ? uploaderProfile.name : 'Um usuário';
-
-            // Busca o papel do criador da fatura para montar a URL correta
-            const [creatorUser] = await conn.query("SELECT r.name as role FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ?", [updatedInvoice.creator_user_id]);
-            const creatorRole = creatorUser ? creatorUser.role.toLowerCase() : 'admin';
-            let notificationUrl = `/${creatorRole}/financeiro`;
-            if (creatorRole === 'admin') notificationUrl = '/admin/financeiro/faturas';
-            if (creatorRole === 'professional') notificationUrl = '/professional/cobrancas';
-
-            // Envia a notificação em tempo real
-            await createNotification(
-                req,
-                updatedInvoice.creator_user_id,
-                'payment_received',
-                `${uploaderName} enviou um comprovante para a fatura #${invoiceId}.`,
-                notificationUrl // Passa a URL dinâmica
-            );
-
-            // Busca os detalhes do criador para enviar o e-mail
-            const [creatorDetails] = await conn.query("SELECT u.email, COALESCE(prof.nome, a.nome) as name FROM users u LEFT JOIN professionals prof ON u.id = prof.user_id LEFT JOIN administrators a ON u.id = a.user_id WHERE u.id = ?", [updatedInvoice.creator_user_id]);
-
-            if (creatorDetails && creatorDetails.email) {
-                try {
-                    // Envia o e-mail de notificação
-                    await sendReceiptUploadNotificationEmail(
-                        creatorDetails.email,
-                        creatorDetails.name || 'Admin',
-                        uploaderName,
-                        invoiceId,
-                        `https://integrandoser.com.br${notificationUrl}` // Adicionado https e domínio
-                    );
-                } catch (emailError) {
-                    console.error("AVISO: Comprovante salvo, mas o e-mail de notificação falhou.", emailError);
-                }
-            }
-        }
-
-        // 4. Responde ao frontend com a fatura atualizada
-        res.json({
-            message: 'Comprovante enviado e fatura marcada como paga!',
-            invoice: serializeBigInts(updatedInvoice) // Enviando os dados atualizados
-        });
-
-    } catch (error) {
-        console.error("Erro ao salvar comprovante:", error);
-        res.status(500).json({ message: 'Erro ao salvar comprovante.' });
-    } finally {
-        if (conn) conn.release();
-    }
-});
-*/
 router.post('/invoices/:invoiceId/upload-receipt', [protect, upload.single('receipt')], async (req, res) => {
     const { invoiceId } = req.params;
     const userId = req.user.id || req.user.userId;
@@ -2467,60 +2185,6 @@ router.get('/professional/monthly-net-revenue', [protect, isProfissional], async
 });
 
 
-// ROTA PARA BUSCAR DETALHES DE FATURAMENTO DE UM PROFISSIONAL ESPECÍFICO
-/*
-router.get('/professional-billing-details/:professionalId', [protect, isAdmin], async (req, res) => {
-    const { professionalId } = req.params;
-
-    try {
-        // Busca os dados do profissional
-        const [professionalDetails] = await db.query(
-            `SELECT p.id, p.nome, u.id as user_id 
-             FROM professionals p
-             JOIN users u ON p.user_id = u.id
-             WHERE p.id = ?`,
-            [professionalId]
-        );
-
-        if (!professionalDetails) {
-            return res.status(404).json({ message: 'Profissional não encontrado.' });
-        }
-
-        // Busca todos os itens de faturamento pendentes (unbilled)
-        const billingItems = await db.query(
-            `SELECT 
-                pb.id,
-                pb.billing_date,
-                pb.gross_value,
-                pb.commission_value,
-                p.nome as patient_name
-             FROM professional_billings pb
-             JOIN appointments a ON pb.appointment_id = a.id
-             JOIN patients p ON a.patient_id = p.id
-             WHERE pb.professional_id = ? AND pb.status = 'unbilled'
-             ORDER BY pb.billing_date ASC`,
-            [professionalId]
-        );
-
-        // Calcula os totais
-        const summary = billingItems.reduce((acc, item) => {
-            acc.totalGross += parseFloat(item.gross_value);
-            acc.totalCommission += parseFloat(item.commission_value);
-            return acc;
-        }, { totalGross: 0, totalCommission: 0 });
-
-        res.json(serializeBigInts({
-            professional: professionalDetails,
-            billingItems,
-            summary
-        }));
-
-    } catch (error) {
-        console.error("Erro ao buscar detalhes de faturamento do profissional:", error);
-        res.status(500).json({ message: 'Erro ao buscar detalhes de faturamento.' });
-    }
-});
-*/
 router.get('/professional-billing-details/:professionalId', [protect, isAdmin], async (req, res) => {
     const { professionalId } = req.params;
 
@@ -2636,6 +2300,79 @@ router.get('/professional/annual-net-revenue', [protect, isProfissional], async 
     } catch (error) {
         console.error("Erro ao calcular faturamento líquido anual do profissional:", error);
         res.status(500).json({ message: 'Erro ao calcular faturamento líquido anual.' });
+    }
+});
+
+
+
+// Rota para Reenviar Notificação de Cobrança
+router.post('/invoices/:id/resend', [protect], async (req, res) => {
+    const { id } = req.params;
+    const userId = req.user.id || req.user.userId;
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+        
+        // Busca a fatura e garante que quem está pedindo é o criador (Profissional)
+        const [invoice] = await conn.query(
+            "SELECT * FROM invoices WHERE id = ? AND creator_user_id = ?", 
+            [id, userId]
+        );
+
+        if (!invoice) {
+            return res.status(404).json({ message: "Fatura não encontrada ou permissão negada." });
+        }
+
+        if (invoice.status === 'paid' || invoice.status === 'completed') {
+            return res.status(400).json({ message: "Esta fatura já foi paga." });
+        }
+
+        // Busca dados do destinatário
+        const [recipient] = await conn.query(
+            `SELECT u.email, COALESCE(p.nome, c.nome_empresa, u.email) as nome 
+             FROM users u 
+             LEFT JOIN patients p ON u.id = p.user_id 
+             LEFT JOIN companies c ON u.id = c.user_id 
+             WHERE u.id = ?`, 
+            [invoice.user_id]
+        );
+
+        // Busca dados do remetente (Profissional)
+        const [sender] = await conn.query("SELECT nome FROM professionals WHERE user_id = ?", [userId]);
+        const senderName = sender ? sender.nome : 'Seu Profissional';
+
+        if (recipient && recipient.email) {
+            // Reutiliza a função de envio de email existente
+            await sendInvoiceNotificationEmail(
+                recipient.email,
+                recipient.nome,
+                senderName,
+                invoice.amount,
+                invoice.due_date,
+                invoice.id,
+                'https://integrandoser.com.br/paciente/financeiro'
+            );
+
+            // Cria notificação interna
+            await createNotification(
+                req,
+                invoice.user_id,
+                'new_invoice',
+                `Lembrete: Você possui uma cobrança pendente de ${senderName}.`,
+                '/paciente/financeiro'
+            );
+
+            res.json({ message: 'Notificação de cobrança reenviada com sucesso!' });
+        } else {
+            res.status(404).json({ message: 'E-mail do destinatário não encontrado.' });
+        }
+
+    } catch (error) {
+        console.error("Erro ao reenviar cobrança:", error);
+        res.status(500).json({ message: 'Erro ao reenviar notificação.' });
+    } finally {
+        if (conn) conn.release();
     }
 });
 
