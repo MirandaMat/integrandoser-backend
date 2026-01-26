@@ -2376,25 +2376,32 @@ router.post('/invoices/:id/resend', [protect], async (req, res) => {
     }
 });
 
-// Rota para baixar histórico financeiro de um paciente específico (PDF)
-router.get('/professional/patient-history/:patientId/download', [protect, isProfissional], async (req, res) => {
-    const { patientId } = req.params;
+
+// NOVA ROTA: Busca por NOME para facilitar o clique no front-end
+router.get('/professional/patient-history-by-name/:patientName/download', [protect, isProfissional], async (req, res) => {
+    const { patientName } = req.params;
     const professionalUserId = req.user.id || req.user.userId;
 
     let conn;
     try {
         conn = await db.getConnection();
 
-        // 1. Busca dados do paciente e verifica vínculo
-        const [patient] = await conn.query(
-            `SELECT p.nome, u.email, p.user_id 
-             FROM patients p 
-             JOIN users u ON p.user_id = u.id 
-             WHERE p.id = ?`, [patientId]
+        // 1. Busca o ID do paciente pelo nome e garante que ele tem faturas com este profissional
+        const [patientRows] = await conn.query(
+            `SELECT p.id, p.nome, p.user_id 
+             FROM patients p
+             JOIN invoices i ON p.user_id = i.user_id
+             WHERE p.nome = ? AND i.creator_user_id = ?
+             LIMIT 1`, [patientName, professionalUserId]
         );
-        if (!patient) return res.status(404).json({ message: 'Paciente não encontrado.' });
 
-        // 2. Busca todas as faturas (Pagas, Pendentes, Vencidas) criadas por este profissional para este paciente
+        const patient = Array.isArray(patientRows) ? patientRows[0] : patientRows;
+
+        if (!patient) {
+            return res.status(404).json({ message: 'Paciente não encontrado ou sem histórico com você.' });
+        }
+
+        // 2. Busca todas as faturas
         const query = `
             SELECT id, amount, due_date, created_at, description, status
             FROM invoices
@@ -2403,39 +2410,39 @@ router.get('/professional/patient-history/:patientId/download', [protect, isProf
         `;
         const invoices = await conn.query(query, [patient.user_id, professionalUserId]);
 
-        // 3. Geração do PDF
+        // 3. Geração do PDF (Mesma lógica de antes...)
         const doc = new PDFDocument({ size: 'A4', margin: 40 });
-        const filename = `historico_financeiro_${patient.nome.replace(/\s+/g, '_')}.pdf`;
-
-        res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-disposition', `attachment; filename="historico_${patient.nome}.pdf"`);
         res.setHeader('Content-Type', 'application/pdf');
         doc.pipe(res);
 
         doc.fontSize(18).text('Relatório Financeiro por Paciente', { align: 'center' }).moveDown();
         doc.fontSize(12).text(`Paciente: ${patient.nome}`);
-        doc.text(`Data de Emissão: ${new Date().toLocaleDateString('pt-BR')}`).moveDown(2);
+        doc.text(`Profissional: ${req.user.nome || 'Consultor'}`);
+        doc.text(`Data: ${new Date().toLocaleDateString('pt-BR')}`).moveDown(2);
 
         const table = {
-            headers: ['Data', 'Descrição', 'Vencimento', 'Status', 'Valor'],
+            headers: ['Data', 'Descrição', 'Status', 'Valor'],
             rows: invoices.map(inv => [
                 new Date(inv.created_at).toLocaleDateString('pt-BR'),
                 inv.description,
-                new Date(inv.due_date).toLocaleDateString('pt-BR'),
                 inv.status.toUpperCase(),
-                inv.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+                parseFloat(inv.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
             ])
         };
 
-        drawTableWithPagination(doc, table, 40, doc.y, [70, 180, 80, 80, 100]);
+        drawTableWithPagination(doc, table, 40, doc.y, [80, 250, 80, 100]);
         doc.end();
 
     } catch (error) {
-        console.error("Erro ao gerar PDF do paciente:", error);
-        res.status(500).json({ message: 'Erro ao gerar arquivo.' });
+        console.error("Erro ao gerar PDF:", error);
+        res.status(500).json({ message: 'Erro interno ao gerar PDF.' });
     } finally {
         if (conn) conn.release();
     }
 });
+
+
 
 
 module.exports = router;
