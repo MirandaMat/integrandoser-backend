@@ -19,7 +19,7 @@ const initScheduledJobs = () => {
             // Find appointments happening between 23h and 25h from now that haven't been confirmed yet
             // and don't have a token generated (avoid spamming)
             const query = `
-                SELECT a.id, a.appointment_time, u.email, u.telefone, p.nome, a.professional_id
+                SELECT a.id, a.appointment_time, u.email, p.telefone, p.nome, a.professional_id
                 FROM appointments a
                 JOIN patients p ON a.patient_id = p.id
                 JOIN users u ON p.user_id = u.id

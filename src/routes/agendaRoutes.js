@@ -319,7 +319,7 @@ router.post('/create-appointment', protect, isAdmin, async (req, res) => {
         }
 
         // Notificação padrão de agendamento (para todos os casos)
-        const [patientUser] = await conn.query("SELECT user_id, nome, email FROM patients p JOIN users u ON p.user_id = u.id WHERE p.id = ?", [patient_id]);
+        const [patientUser] = await conn.query("SELECT user_id, nome, email, telefone FROM patients p JOIN users u ON p.user_id = u.id WHERE p.id = ?", [patient_id]);
         if (patientUser && patientUser.user_id) {
             const appointmentDate = new Date(appointment_times[0]).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
             
@@ -353,12 +353,15 @@ router.post('/create-appointment', protect, isAdmin, async (req, res) => {
                     );
                     // --- NOVO: Envio de WhatsApp ---
                     if (patientUser.telefone) {
+                        console.log(`[Agenda Admin] Tentando enviar WhatsApp para ${patientUser.nome} no número ${patientUser.telefone}`);
                         await sendWhatsAppConfirmation(
                             patientUser.telefone,
                             patientUser.nome,
                             professionalName,
                             new Date(appointment_times[0])
                         );
+                    } else {
+                        console.warn(`[Agenda Admin] Paciente ${patientUser.nome} não tem telefone cadastrado. WhatsApp pulado.`);
                     }
                 } catch (emailError) {
                     console.error("AVISO: Agendamento (Admin) criado, mas e-mail de confirmação falhou.", emailError);
@@ -1281,7 +1284,7 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
             } catch (e) { console.error("Erro notificação pacote:", e); }
         }
 
-        const [patientUser] = await conn.query("SELECT user_id, nome, email FROM patients p JOIN users u ON p.user_id = u.id WHERE p.id = ?", [patient_id]);
+        const [patientUser] = await conn.query("SELECT user_id, nome, email, telefone FROM patients p JOIN users u ON p.user_id = u.id WHERE p.id = ?", [patient_id]);
         if (patientUser && patientUser.user_id) {
             const appointmentDate = new Date(appointment_times[0]).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
             await createNotification(req, patientUser.user_id, 'new_appointment', `Novo agendamento com ${professionalName} em ${appointmentDate}.`, '/paciente/agenda');
@@ -1295,6 +1298,7 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
                     );
                     // --- NOVO: Envio de WhatsApp ---
                     if (patientUser.telefone) {
+                        console.log(`[Agenda Profissional] Tentando enviar WhatsApp para ${patientUser.nome}`);
                         await sendWhatsAppConfirmation(
                             patientUser.telefone,
                             patientUser.nome,
