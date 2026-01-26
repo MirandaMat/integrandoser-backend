@@ -2376,4 +2376,66 @@ router.post('/invoices/:id/resend', [protect], async (req, res) => {
     }
 });
 
+// Rota para baixar histórico financeiro de um paciente específico (PDF)
+router.get('/professional/patient-history/:patientId/download', [protect, isProfissional], async (req, res) => {
+    const { patientId } = req.params;
+    const professionalUserId = req.user.id || req.user.userId;
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+
+        // 1. Busca dados do paciente e verifica vínculo
+        const [patient] = await conn.query(
+            `SELECT p.nome, u.email, p.user_id 
+             FROM patients p 
+             JOIN users u ON p.user_id = u.id 
+             WHERE p.id = ?`, [patientId]
+        );
+        if (!patient) return res.status(404).json({ message: 'Paciente não encontrado.' });
+
+        // 2. Busca todas as faturas (Pagas, Pendentes, Vencidas) criadas por este profissional para este paciente
+        const query = `
+            SELECT id, amount, due_date, created_at, description, status
+            FROM invoices
+            WHERE user_id = ? AND creator_user_id = ?
+            ORDER BY created_at DESC
+        `;
+        const invoices = await conn.query(query, [patient.user_id, professionalUserId]);
+
+        // 3. Geração do PDF
+        const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        const filename = `historico_financeiro_${patient.nome.replace(/\s+/g, '_')}.pdf`;
+
+        res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Type', 'application/pdf');
+        doc.pipe(res);
+
+        doc.fontSize(18).text('Relatório Financeiro por Paciente', { align: 'center' }).moveDown();
+        doc.fontSize(12).text(`Paciente: ${patient.nome}`);
+        doc.text(`Data de Emissão: ${new Date().toLocaleDateString('pt-BR')}`).moveDown(2);
+
+        const table = {
+            headers: ['Data', 'Descrição', 'Vencimento', 'Status', 'Valor'],
+            rows: invoices.map(inv => [
+                new Date(inv.created_at).toLocaleDateString('pt-BR'),
+                inv.description,
+                new Date(inv.due_date).toLocaleDateString('pt-BR'),
+                inv.status.toUpperCase(),
+                inv.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+            ])
+        };
+
+        drawTableWithPagination(doc, table, 40, doc.y, [70, 180, 80, 80, 100]);
+        doc.end();
+
+    } catch (error) {
+        console.error("Erro ao gerar PDF do paciente:", error);
+        res.status(500).json({ message: 'Erro ao gerar arquivo.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+
 module.exports = router;
