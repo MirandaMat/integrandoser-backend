@@ -710,32 +710,72 @@ router.get('/services/:slug', async (req, res) => {
 });
 
 // =========== Formularios de Contato ===========
-// GET /api/content/triagem-config/:type
+// GET: Buscar configuração do formulário
 router.get('/triagem-config/:type', async (req, res) => {
     let conn;
     try {
+        const { type } = req.params;
         conn = await pool.getConnection();
-        const rows = await conn.query("SELECT * FROM triagem_forms_config WHERE form_type = ?", [req.params.type]);
-        res.json(serializeBigInts(rows[0] || {}));
+        
+        // Verifica se existe configuração
+        const [rows] = await conn.query("SELECT * FROM triagem_forms_config WHERE form_type = ?", [type]);
+        
+        if (rows.length > 0) {
+            // Se existir, retorna os dados (convertendo o JSON string para objeto)
+            const config = rows[0];
+            // Garante que fields seja um objeto/array JS, não string
+            if (typeof config.fields === 'string') {
+                config.fields = JSON.parse(config.fields);
+            }
+            res.json(config);
+        } else {
+            // Se não existir, retorna um template vazio padrão para evitar erro 404 no frontend
+            res.json({
+                form_type: type,
+                title: `Formulário de ${type.charAt(0).toUpperCase() + type.slice(1)}`,
+                description: '',
+                fields: []
+            });
+        }
     } catch (error) {
-        res.status(500).json({ message: 'Erro ao buscar configuração.' });
+        console.error('Erro ao buscar config de triagem:', error);
+        res.status(500).json({ message: 'Erro interno ao buscar configuração.' });
     } finally {
         if (conn) conn.release();
     }
 });
 
-// PUT /api/content/triagem-config/:type
-router.put('/triagem-config/:type', protect, isAdmin, async (req, res) => {
-    const { title, description, fields } = req.body;
+// PUT: Atualizar configuração do formulário (Requer Admin)
+router.put('/triagem-config/:type', verifyToken, checkRole(['admin']), async (req, res) => {
     let conn;
     try {
+        const { type } = req.params;
+        const { title, description, fields } = req.body;
+        
+        // Validação básica
+        if (!title || !Array.isArray(fields)) {
+            return res.status(400).json({ message: 'Dados inválidos. Título e campos são obrigatórios.' });
+        }
+
         conn = await pool.getConnection();
-        await conn.query(
+        
+        // Tenta atualizar primeiro
+        const [updateResult] = await conn.query(
             "UPDATE triagem_forms_config SET title = ?, description = ?, fields = ? WHERE form_type = ?",
-            [title, description, JSON.stringify(fields), req.params.type]
+            [title, description, JSON.stringify(fields), type]
         );
-        res.json({ message: 'Formulário atualizado com sucesso!' });
+
+        // Se não atualizou nenhuma linha (não existe), insere
+        if (updateResult.affectedRows === 0) {
+            await conn.query(
+                "INSERT INTO triagem_forms_config (form_type, title, description, fields) VALUES (?, ?, ?, ?)",
+                [type, title, description, JSON.stringify(fields)]
+            );
+        }
+
+        res.json({ message: 'Configuração do formulário salva com sucesso!' });
     } catch (error) {
+        console.error('Erro ao salvar config de triagem:', error);
         res.status(500).json({ message: 'Erro ao salvar configuração.' });
     } finally {
         if (conn) conn.release();
