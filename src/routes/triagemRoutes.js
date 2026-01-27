@@ -51,13 +51,14 @@ router.post('/paciente', async (req, res) => {
     const email = b.email || b.e_mail;
     const telefone = b.telefone || b.celular || b.whatsapp;
     
-    // Tratamento de data de nascimento (evitar string vazia)
+    // Tratamento de data
     let data_nascimento = b.data_nascimento;
     if (!data_nascimento || data_nascimento === '') data_nascimento = null;
 
     const genero = b.genero;
     const endereco = b.endereco;
     const cidade = b.cidade;
+    const estado = b.estado; 
     
     // Campos JSON/Arrays
     const terapia_buscada_val = b.terapia_buscada || b.motivo || [];
@@ -70,21 +71,15 @@ router.post('/paciente', async (req, res) => {
     const feedback_questionario = b.feedback_questionario;
     const concorda_termos = b.concorda_termos ? 1 : 0;
 
-    // Validação Básica
-    if (!nome_completo) {
-        return res.status(400).json({ message: "Erro: O campo 'Nome Completo' é obrigatório." });
-    }
-    if (!email) {
-        return res.status(400).json({ message: "Erro: O campo 'Email' é obrigatório." });
-    }
+    if (!nome_completo) return res.status(400).json({ message: "Erro: O campo 'Nome Completo' é obrigatório." });
+    if (!email) return res.status(400).json({ message: "Erro: O campo 'Email' é obrigatório." });
 
     let conn;
     try {
         conn = await pool.getConnection();
-        // CORREÇÃO: Inserção do campo data_nascimento
         await conn.query(
-            "INSERT INTO triagem_pacientes (nome_completo, email, data_nascimento, genero, telefone, endereco, cidade, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nome_completo, email, data_nascimento, genero, telefone, endereco, cidade, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos]
+            "INSERT INTO triagem_pacientes (nome_completo, email, data_nascimento, genero, telefone, endereco, cidade, estado, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nome_completo, email, data_nascimento, genero, telefone, endereco, cidade, estado, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos]
         );
 
         await notifyAdmins(req, 'new_triage', `Nova triagem de paciente pendente: ${nome_completo}.`);
@@ -98,6 +93,7 @@ router.post('/paciente', async (req, res) => {
     }
 });
 
+
 // Rota para receber submissão do formulário de EMPRESA
 router.post('/empresa', async (req, res) => {
     const b = req.body;
@@ -110,6 +106,7 @@ router.post('/empresa', async (req, res) => {
     const cargo_responsavel = b.cargo_responsavel || b.cargo;
     const telefone = b.telefone || b.celular;
     const caracterizacao_demanda = b.caracterizacao_demanda || b.demanda;
+    const estado = b.estado; // <--- NOVO CAMPO
     
     // Tratamento de JSON
     const tipo_atendimento_val = b.tipo_atendimento_desejado || [];
@@ -129,8 +126,8 @@ router.post('/empresa', async (req, res) => {
     try {
         conn = await pool.getConnection();
         await conn.query(
-            "INSERT INTO triagem_empresas (nome_empresa, email, cnpj, num_colaboradores, nome_responsavel, cargo_responsavel, telefone, caracterizacao_demanda, tipo_atendimento_desejado, publico_alvo, frequencia_desejada, expectativas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nome_empresa, email, cnpj, num_colaboradores, nome_responsavel, cargo_responsavel, telefone, caracterizacao_demanda, tipo_atendimento_desejado, publico_alvo, frequencia_desejada, expectativas]
+            "INSERT INTO triagem_empresas (nome_empresa, email, cnpj, num_colaboradores, nome_responsavel, cargo_responsavel, telefone, estado, caracterizacao_demanda, tipo_atendimento_desejado, publico_alvo, frequencia_desejada, expectativas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nome_empresa, email, cnpj, num_colaboradores, nome_responsavel, cargo_responsavel, telefone, estado, caracterizacao_demanda, tipo_atendimento_desejado, publico_alvo, frequencia_desejada, expectativas]
         );
 
         await notifyAdmins(req, 'new_triage', `Nova triagem de empresa pendente: ${nome_empresa}.`);
@@ -152,14 +149,14 @@ router.post('/profissional', async (req, res) => {
     const email = b.email;
     const endereco = b.endereco;
     const cidade = b.cidade;
+    const estado = b.estado; // <--- NOVO CAMPO
     const telefone = b.telefone || b.celular;
     
-    // Tratamento de data de nascimento (evitar string vazia)
     let data_nascimento = b.data_nascimento;
     if (!data_nascimento || data_nascimento === '') data_nascimento = null;
 
     const nivel_profissional = b.nivel_profissional;
-    const aluno_tavola = b.aluno_tavola; // checkbox
+    const aluno_tavola = b.aluno_tavola; 
     const modalidade = b.modalidade;
     const especialidade = b.especialidade;
     const instituicao_formacao = b.instituicao_formacao;
@@ -175,10 +172,9 @@ router.post('/profissional', async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
-        // CORREÇÃO: Inserção do campo data_nascimento
         await conn.query(
-            "INSERT INTO triagem_profissionais (nome_completo, email, data_nascimento, endereco, cidade, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nome_completo, email, data_nascimento, endereco, cidade, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes]
+            "INSERT INTO triagem_profissionais (nome_completo, email, data_nascimento, endereco, cidade, estado, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nome_completo, email, data_nascimento, endereco, cidade, estado, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes]
         );
 
         await notifyAdmins(req, 'new_triage', `Nova triagem de profissional pendente: ${nome_completo}.`);
@@ -458,10 +454,11 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
                 user_id: newUserId, 
                 nome: triagemData.nome_completo, 
                 genero: triagemData.genero,
-                data_nascimento: triagemData.data_nascimento, // CORREÇÃO: Campo Adicionado
+                data_nascimento: triagemData.data_nascimento, 
                 telefone: triagemData.telefone, 
                 endereco: triagemData.endereco, 
                 cidade: triagemData.cidade,
+                estado: triagemData.estado,
                 modalidade_atendimento: triagemData.modalidade, 
                 profissao: triagemData.profissao, 
                 renda: parseFloat(triagemData.renda_familiar?.match(/[\d,.]+/g)?.join('').replace('.', '').replace(',', '.') || 0),
@@ -473,9 +470,10 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
                 user_id: newUserId, 
                 nome: triagemData.nome_completo, 
                 email: triagemData.email, 
-                data_nascimento: triagemData.data_nascimento, // CORREÇÃO: Campo Adicionado
+                data_nascimento: triagemData.data_nascimento, 
                 endereco: triagemData.endereco,
                 cidade: triagemData.cidade, 
+                estado: triagemData.estado,
                 telefone: triagemData.telefone, 
                 modalidade_atendimento: triagemData.modalidade,
                 especialidade: triagemData.especialidade, 
@@ -488,6 +486,7 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
                 num_colaboradores: parseInt(triagemData.num_colaboradores, 10) || 0, nome_responsavel: triagemData.nome_responsavel,
                 cargo: triagemData.cargo_responsavel,
                 telefone: triagemData.telefone, descricao: triagemData.caracterizacao_demanda,
+                estado: triagemData.estado,
                 tipo_atendimento: JSON.stringify(triagemData.tipo_atendimento_desejado),
                 frequencia: triagemData.frequencia_desejada,
                 expectativa: triagemData.expectativas

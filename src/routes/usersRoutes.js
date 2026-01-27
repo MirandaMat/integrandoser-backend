@@ -395,113 +395,8 @@ router.get('/patient-profile/:patientId', protect, isProfissional, async (req, r
         if (conn) conn.release();
     }
 });
-/*
-// POST /api/users - Rota para CRIAR um novo usuário com perfil COMPLETO
-router.post('/', protect, isAdmin, upload.single('imagem_perfil'), async (req, res) => {
-    const { email, password, role_id } = req.body;
-    const profileData = JSON.parse(req.body.profileData || '{}');
 
-    if (!email || !password || !role_id || !profileData) {
-        return res.status(400).json({ message: 'Dados insuficientes.' });
-    }
 
-    if (req.file && req.file.gcsUrl) { // <<< Verifica se gcsUrl existe
-        profileData.imagem_url = req.file.gcsUrl; // <<< Linha corrigida
-    } else if (req.file) {
-        console.warn(`[USER UPDATE] Arquivo ${req.file.originalname} recebido, mas URL GCS não encontrada.`);
-        // Decide se quer lançar um erro ou apenas ignorar a imagem na atualização
-    }
-
-    if (profileData.data_nascimento && typeof profileData.data_nascimento === 'string') {
-        const date = new Date(profileData.data_nascimento);
-        // A forma padrão de verificar se uma data é válida em JS é checando se seu tempo não é NaN
-        if (!isNaN(date.getTime())) {
-            profileData.data_nascimento = date.toISOString().split('T')[0];
-        } else {
-            // Se a string não for uma data válida, salve como null.
-            profileData.data_nascimento = null;
-        }
-    } else {
-        // Se não for uma string (ou for vazia), salve como null.
-        profileData.data_nascimento = null;
-    }
-
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        const existingUser = await conn.query("SELECT id FROM users WHERE email = ?", [email]);
-        if (existingUser.length > 0) {
-            return res.status(409).json({ message: 'Este email já está em uso.' });
-        }
-
-        await conn.beginTransaction();
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-        const userResult = await conn.query(
-            'INSERT INTO users (email, password, role_id) VALUES (?, ?, ?)',
-            [email, hashedPassword, role_id]
-        );
-        
-        let newUserId;
-        // Primeiro, verificamos se o resultado é um array (como em [OkPacket, fields])
-        if (Array.isArray(userResult) && userResult[0]) {
-            newUserId = userResult[0].insertId;
-        } 
-        // Senão, verificamos se é um objeto direto com a propriedade insertId
-        else if (userResult && userResult.insertId) {
-            newUserId = userResult.insertId;
-        }
-
-        // Se, após ambas as checagens, o ID não for encontrado, lançamos um erro claro.
-        if (!newUserId) {
-            console.error("Estrutura inesperada do resultado do INSERT:", userResult);
-            throw new Error("Não foi possível obter o ID do novo usuário após a inserção.");
-        }
-        // ===================================================================
-
-        profileData.user_id = newUserId;
-
-        let tableName, fields;
-        switch (String(role_id)) {
-            case '1':
-                tableName = 'administrators';
-                fields = ['user_id', 'nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'telefone', 'email', 'endereco', 'profissao', 'imagem_url'];
-                break;
-            case '2':
-                tableName = 'professionals';
-                fields = ['user_id', 'nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url', 'fixed_fee'];
-                break;
-            case '3':
-                tableName = 'patients';
-                fields = ['user_id', 'nome', 'cpf', 'telefone', 'profissao', 'renda', 'preferencia_gen_atend', 'data_nascimento', 'genero', 'endereco', 'cidade', 'tipo_atendimento', 'modalidade_atendimento', 'imagem_url'];
-                break;
-            case '4':
-                tableName = 'companies';
-                fields = ['user_id', 'nome_empresa', 'cnpj', 'num_colaboradores', 'nome_responsavel', 'cargo', 'telefone', 'email_contato', 'descricao', 'tipo_atendimento', 'frequencia', 'expectativa', 'imagem_url'];
-                break;
-            default:
-                throw new Error('Papel inválido');
-        }
-
-        const values = fields.map(field => profileData[field] || null);
-        const placeholders = fields.map(() => '?').join(',');
-        await conn.query(`INSERT INTO ${tableName} (${fields.join(',')}) VALUES (${placeholders})`, values);
-
-        await conn.commit();
-        
-        // Notificar o novo usuário
-        await createNotification(req, newUserId, 'profile_update', 'Sua conta foi criada com sucesso! Configure seu perfil.');
-        
-        res.status(201).json({ id: String(newUserId), email, role_id });
-    } catch (error) {
-        if (conn) await conn.rollback();
-        console.error("Erro ao criar usuário:", error);
-        res.status(500).json({ message: 'Erro ao criar usuário.', error: error.message });
-    } finally {
-        if (conn) conn.release();
-    }
-});
-*/
 // POST /api/users - Rota para CRIAR um novo usuário com perfil COMPLETO
 router.post('/', protect, isAdmin, upload.single('imagem_perfil'), async (req, res) => {
     const { email, password, role_id } = req.body;
@@ -562,20 +457,19 @@ router.post('/', protect, isAdmin, upload.single('imagem_perfil'), async (req, r
         switch (String(role_id)) {
             case '1':
                 tableName = 'administrators';
-                fields = ['user_id', 'nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'telefone', 'email', 'endereco', 'profissao', 'imagem_url'];
+                fields = ['user_id', 'nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'telefone', 'email', 'endereco', 'cidade', 'estado', 'profissao', 'imagem_url'];
                 break;
             case '2':
                 tableName = 'professionals';
-                // CORREÇÃO: 'fixed_fee' adicionado na lista de campos permitidos
-                fields = ['user_id', 'nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url', 'fixed_fee', 'commission_rate', 'billing_due_day'];
+                fields = ['user_id', 'nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'estado', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url', 'fixed_fee', 'commission_rate', 'billing_due_day'];
                 break;
             case '3':
                 tableName = 'patients';
-                fields = ['user_id', 'nome', 'cpf', 'telefone', 'profissao', 'renda', 'preferencia_gen_atend', 'data_nascimento', 'genero', 'endereco', 'cidade', 'tipo_atendimento', 'modalidade_atendimento', 'imagem_url'];
+                fields = ['user_id', 'nome', 'cpf', 'telefone', 'profissao', 'renda', 'preferencia_gen_atend', 'data_nascimento', 'genero', 'endereco', 'cidade', 'estado', 'tipo_atendimento', 'modalidade_atendimento', 'imagem_url']; 
                 break;
             case '4':
                 tableName = 'companies';
-                fields = ['user_id', 'nome_empresa', 'cnpj', 'num_colaboradores', 'nome_responsavel', 'cargo', 'telefone', 'email_contato', 'descricao', 'tipo_atendimento', 'frequencia', 'expectativa', 'imagem_url'];
+                fields = ['user_id', 'nome_empresa', 'cnpj', 'num_colaboradores', 'nome_responsavel', 'cargo', 'telefone', 'email_contato', 'estado', 'descricao', 'tipo_atendimento', 'frequencia', 'expectativa', 'imagem_url']; 
                 break;
             default:
                 throw new Error('Papel inválido');
@@ -646,20 +540,19 @@ router.put('/:id', protect, isAdmin, upload.single('imagem_perfil'), async (req,
         switch (role) {
             case 'ADM':
                 tableName = 'administrators';
-                allFields = ['nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'telefone', 'email', 'endereco', 'profissao', 'imagem_url'];
+                allFields = ['nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'telefone', 'email', 'endereco', 'cidade', 'estado', 'profissao', 'imagem_url']; // Adicionado
                 break;
             case 'PROFISSIONAL':
                 tableName = 'professionals';
-                // CORREÇÃO: 'fixed_fee' adicionado na lista de campos permitidos para atualização
-                allFields = ['nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url', 'fixed_fee', 'commission_rate', 'billing_due_day'];
+                allFields = ['nome', 'cpf', 'cnpj', 'data_nascimento', 'genero', 'endereco', 'cidade', 'estado', 'telefone', 'email', 'profissao', 'level', 'modalidade_atendimento', 'especialidade', 'experiencia', 'abordagem', 'tipo_acompanhamento', 'imagem_url', 'fixed_fee', 'commission_rate', 'billing_due_day']; // Adicionado
                 break;
             case 'PACIENTE':
                 tableName = 'patients';
-                allFields = ['nome', 'cpf', 'telefone', 'profissao', 'imagem_url', 'renda', 'preferencia_gen_atend', 'data_nascimento', 'genero', 'endereco', 'cidade', 'tipo_atendimento', 'modalidade_atendimento'];
+                allFields = ['nome', 'cpf', 'telefone', 'profissao', 'imagem_url', 'renda', 'preferencia_gen_atend', 'data_nascimento', 'genero', 'endereco', 'cidade', 'estado', 'tipo_atendimento', 'modalidade_atendimento']; // Adicionado
                 break;
             case 'EMPRESA':
                 tableName = 'companies'; 
-                allFields = ['nome_empresa', 'cnpj', 'num_colaboradores', 'nome_responsavel', 'cargo', 'telefone', 'email_contato', 'descricao', 'tipo_atendimento', 'frequencia', 'expectativa', 'imagem_url'];
+                allFields = ['nome_empresa', 'cnpj', 'num_colaboradores', 'nome_responsavel', 'cargo', 'telefone', 'email_contato', 'estado', 'descricao', 'tipo_atendimento', 'frequencia', 'expectativa', 'imagem_url']; // Adicionado
                 break;
             default: throw new Error('Papel inválido');
         }
