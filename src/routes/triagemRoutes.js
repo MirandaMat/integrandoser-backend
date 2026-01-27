@@ -69,7 +69,12 @@ router.post('/paciente', async (req, res) => {
     const renda_familiar = b.renda_familiar || b.renda;
     const preferencia_genero_profissional = b.preferencia_genero_profissional;
     const feedback_questionario = b.feedback_questionario;
-    const concorda_termos = b.concorda_termos ? 1 : 0;
+    let concorda_termos = 0;
+    if (Array.isArray(b.concorda_termos)) {
+        concorda_termos = b.concorda_termos.length > 0 ? 1 : 0;
+    } else {
+        concorda_termos = b.concorda_termos ? 1 : 0;
+    }
 
     if (!nome_completo) return res.status(400).json({ message: "Erro: O campo 'Nome Completo' é obrigatório." });
     if (!email) return res.status(400).json({ message: "Erro: O campo 'Email' é obrigatório." });
