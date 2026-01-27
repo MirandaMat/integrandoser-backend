@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../config/db.js');
 const { protect, isAdmin } = require('../middleware/authMiddleware.js');
 const upload = require('../middleware/uploadMiddleware.js');
+const { protect, isAdmin } = require('../middleware/authMiddleware.js');
 const router = express.Router();
 
 // Função auxiliar para converter BigInt para String
@@ -717,19 +718,22 @@ router.get('/triagem-config/:type', async (req, res) => {
         const { type } = req.params;
         conn = await pool.getConnection();
         
-        // Verifica se existe configuração
+        // Verifica se existe configuração para este tipo (paciente, empresa, profissional)
         const [rows] = await conn.query("SELECT * FROM triagem_forms_config WHERE form_type = ?", [type]);
         
         if (rows.length > 0) {
-            // Se existir, retorna os dados (convertendo o JSON string para objeto)
             const config = rows[0];
-            // Garante que fields seja um objeto/array JS, não string
+            // Garante que 'fields' seja retornado como JSON (Objeto), não como string
             if (typeof config.fields === 'string') {
-                config.fields = JSON.parse(config.fields);
+                try {
+                    config.fields = JSON.parse(config.fields);
+                } catch (e) {
+                    config.fields = [];
+                }
             }
-            res.json(config);
+            res.json(serializeBigInts(config));
         } else {
-            // Se não existir, retorna um template vazio padrão para evitar erro 404 no frontend
+            // Se não existir, retorna um template padrão para o frontend não quebrar
             res.json({
                 form_type: type,
                 title: `Formulário de ${type.charAt(0).toUpperCase() + type.slice(1)}`,
@@ -745,8 +749,9 @@ router.get('/triagem-config/:type', async (req, res) => {
     }
 });
 
-// PUT: Atualizar configuração do formulário (Requer Admin)
-router.put('/triagem-config/:type', verifyToken, checkRole(['admin']), async (req, res) => {
+// PUT: Atualizar configuração do formulário
+// CORREÇÃO: Usando 'protect' e 'isAdmin' que já existem no seu authMiddleware.js
+router.put('/triagem-config/:type', protect, isAdmin, async (req, res) => {
     let conn;
     try {
         const { type } = req.params;
@@ -754,22 +759,25 @@ router.put('/triagem-config/:type', verifyToken, checkRole(['admin']), async (re
         
         // Validação básica
         if (!title || !Array.isArray(fields)) {
-            return res.status(400).json({ message: 'Dados inválidos. Título e campos são obrigatórios.' });
+            return res.status(400).json({ message: 'Dados inválidos. Título e campos (array) são obrigatórios.' });
         }
 
         conn = await pool.getConnection();
         
+        // Converte o array de campos para string JSON para salvar no MySQL
+        const fieldsJson = JSON.stringify(fields);
+
         // Tenta atualizar primeiro
         const [updateResult] = await conn.query(
             "UPDATE triagem_forms_config SET title = ?, description = ?, fields = ? WHERE form_type = ?",
-            [title, description, JSON.stringify(fields), type]
+            [title, description, fieldsJson, type]
         );
 
-        // Se não atualizou nenhuma linha (não existe), insere
+        // Se não atualizou nenhuma linha (significa que ainda não existe), faz o INSERT
         if (updateResult.affectedRows === 0) {
             await conn.query(
                 "INSERT INTO triagem_forms_config (form_type, title, description, fields) VALUES (?, ?, ?, ?)",
-                [type, title, description, JSON.stringify(fields)]
+                [type, title, description, fieldsJson]
             );
         }
 
@@ -781,5 +789,7 @@ router.put('/triagem-config/:type', verifyToken, checkRole(['admin']), async (re
         if (conn) conn.release();
     }
 });
+
+
 
 module.exports = router;
