@@ -1,3 +1,4 @@
+// server/src/routes/triagemRoutes.js
 const express = require('express');
 const pool = require('../config/db.js');
 const bcrypt = require('bcryptjs');
@@ -40,54 +41,26 @@ const notifyAdmins = async (req, type, message) => {
     }
 };
 
-// --- ROTAS DE SUBMISSÃO DE FORMULÁRIO (PÚBLICAS) ---
 
 // Rota para receber submissão do formulário de PACIENTE
 router.post('/paciente', async (req, res) => {
-    const b = req.body;
-    
-    // Mapeamento flexível: Procura o valor no ID correto ou em variações comuns
-    // Isso previne o erro "Column cannot be null" se o frontend mandar um ID diferente
-    const nome_completo = b.nome_completo || b.nome || b.name || b.fullname;
-    const email = b.email || b.e_mail;
-    const telefone = b.telefone || b.celular || b.whatsapp;
-    const genero = b.genero;
-    const endereco = b.endereco;
-    const cidade = b.cidade;
-    
-    // Campos JSON/Arrays: Garante que sejam strings JSON antes de salvar
-    const terapia_buscada_val = b.terapia_buscada || b.motivo || [];
-    const terapia_buscada = Array.isArray(terapia_buscada_val) ? JSON.stringify(terapia_buscada_val) : JSON.stringify([terapia_buscada_val]);
-    
-    const modalidade = b.modalidade;
-    const profissao = b.profissao;
-    const renda_familiar = b.renda_familiar || b.renda;
-    const preferencia_genero_profissional = b.preferencia_genero_profissional;
-    const feedback_questionario = b.feedback_questionario;
-    const concorda_termos = b.concorda_termos ? 1 : 0;
-
-    // Validação Básica
-    if (!nome_completo) {
-        return res.status(400).json({ message: "Erro: O campo 'Nome Completo' é obrigatório. Verifique a configuração do formulário." });
-    }
-    if (!email) {
-        return res.status(400).json({ message: "Erro: O campo 'Email' é obrigatório. Verifique a configuração do formulário." });
-    }
-
+    const { nome_completo, email, genero, telefone, endereco, cidade, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos } = req.body;
     let conn;
     try {
         conn = await pool.getConnection();
         await conn.query(
             "INSERT INTO triagem_pacientes (nome_completo, email, genero, telefone, endereco, cidade, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nome_completo, email, genero, telefone, endereco, cidade, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos]
+            [nome_completo, email, genero, telefone, endereco, cidade, JSON.stringify(terapia_buscada), modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos]
         );
 
+        // Notifica Admin
         await notifyAdmins(req, 'new_triage', `Nova triagem de paciente pendente: ${nome_completo}.`);
+
 
         res.status(201).json({ message: 'Formulário enviado com sucesso! Entraremos em contato em breve.' });
     } catch (error) {
         console.error("Erro ao salvar triagem de paciente:", error);
-        res.status(500).json({ message: 'Erro interno ao salvar formulário. Tente novamente.' });
+        res.status(500).json({ message: 'Erro ao enviar formulário.' });
     } finally {
         if (conn) conn.release();
     }
@@ -95,42 +68,19 @@ router.post('/paciente', async (req, res) => {
 
 // Rota para receber submissão do formulário de EMPRESA
 router.post('/empresa', async (req, res) => {
-    const b = req.body;
-
-    const nome_empresa = b.nome_empresa || b.empresa || b.nome;
-    const email = b.email;
-    const cnpj = b.cnpj;
-    const num_colaboradores = b.num_colaboradores || 0;
-    const nome_responsavel = b.nome_responsavel || b.responsavel;
-    const cargo_responsavel = b.cargo_responsavel || b.cargo;
-    const telefone = b.telefone || b.celular;
-    const caracterizacao_demanda = b.caracterizacao_demanda || b.demanda;
-    
-    // Tratamento de JSON
-    const tipo_atendimento_val = b.tipo_atendimento_desejado || [];
-    const tipo_atendimento_desejado = Array.isArray(tipo_atendimento_val) ? JSON.stringify(tipo_atendimento_val) : JSON.stringify([tipo_atendimento_val]);
-    
-    const publico_alvo_val = b.publico_alvo || [];
-    const publico_alvo = Array.isArray(publico_alvo_val) ? JSON.stringify(publico_alvo_val) : JSON.stringify([publico_alvo_val]);
-
-    const frequencia_desejada = b.frequencia_desejada;
-    const expectativas = b.expectativas;
-
-    if (!nome_empresa || !email) {
-        return res.status(400).json({ message: "Nome da Empresa e Email são obrigatórios." });
-    }
-
+    const { nome_empresa, email, cnpj, num_colaboradores, nome_responsavel, cargo_responsavel, telefone, caracterizacao_demanda, tipo_atendimento_desejado, publico_alvo, frequencia_desejada, expectativas } = req.body;
     let conn;
     try {
         conn = await pool.getConnection();
         await conn.query(
             "INSERT INTO triagem_empresas (nome_empresa, email, cnpj, num_colaboradores, nome_responsavel, cargo_responsavel, telefone, caracterizacao_demanda, tipo_atendimento_desejado, publico_alvo, frequencia_desejada, expectativas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nome_empresa, email, cnpj, num_colaboradores, nome_responsavel, cargo_responsavel, telefone, caracterizacao_demanda, tipo_atendimento_desejado, publico_alvo, frequencia_desejada, expectativas]
+            [nome_empresa, email, cnpj, num_colaboradores, nome_responsavel, cargo_responsavel, telefone, caracterizacao_demanda, JSON.stringify(tipo_atendimento_desejado), JSON.stringify(publico_alvo), frequencia_desejada, expectativas]
         );
 
+        // Notifica o admin
         await notifyAdmins(req, 'new_triage', `Nova triagem de empresa pendente: ${nome_empresa}.`);
 
-        res.status(201).json({ message: 'Formulário enviado com sucesso! Entraremos em contato.' });
+        res.status(201).json({ message: 'Formulário enviado com sucesso! Entraremos em contato para agendar uma conversa.' });
     } catch (error) {
         console.error("Erro ao salvar triagem de empresa:", error);
         res.status(500).json({ message: 'Erro ao enviar formulário.' });
@@ -141,27 +91,7 @@ router.post('/empresa', async (req, res) => {
 
 // Rota para receber submissão do formulário de PROFISSIONAL
 router.post('/profissional', async (req, res) => {
-    const b = req.body;
-
-    const nome_completo = b.nome_completo || b.nome;
-    const email = b.email;
-    const endereco = b.endereco;
-    const cidade = b.cidade;
-    const telefone = b.telefone || b.celular;
-    const nivel_profissional = b.nivel_profissional;
-    const aluno_tavola = b.aluno_tavola; // checkbox
-    const modalidade = b.modalidade;
-    const especialidade = b.especialidade;
-    const instituicao_formacao = b.instituicao_formacao;
-    const faz_supervisao = b.faz_supervisao;
-    const palavras_chave_abordagens = b.palavras_chave_abordagens || b.abordagem;
-    const faz_analise_pessoal = b.faz_analise_pessoal;
-    const duvidas_sugestoes = b.duvidas_sugestoes;
-
-    if (!nome_completo || !email) {
-        return res.status(400).json({ message: "Nome e Email são obrigatórios." });
-    }
-
+    const { nome_completo, email, endereco, cidade, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes } = req.body;
     let conn;
     try {
         conn = await pool.getConnection();
@@ -170,7 +100,9 @@ router.post('/profissional', async (req, res) => {
             [nome_completo, email, endereco, cidade, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes]
         );
 
+        // Notifica o admin
         await notifyAdmins(req, 'new_triage', `Nova triagem de profissional pendente: ${nome_completo}.`);
+
 
         res.status(201).json({ message: 'Formulário enviado com sucesso! Analisaremos seus dados e entraremos em contato.' });
     } catch (error) {
@@ -187,6 +119,7 @@ router.get('/summary', protect, isAdmin, async (req, res) => {
     try {
         conn = await pool.getConnection();
         
+        // **LÓGICA DE CONTAGEM MAIS ROBUSTA**
         const pacienteRows = await conn.query("SELECT COUNT(*) as count FROM triagem_pacientes WHERE status COLLATE utf8mb4_general_ci = 'Pendente'");
         const profissionalRows = await conn.query("SELECT COUNT(*) as count FROM triagem_profissionais WHERE status COLLATE utf8mb4_general_ci = 'Pendente'");
         const empresaRows = await conn.query("SELECT COUNT(*) as count FROM triagem_empresas WHERE status COLLATE utf8mb4_general_ci = 'Pendente'");
@@ -201,6 +134,9 @@ router.get('/summary', protect, isAdmin, async (req, res) => {
             empresas: String(empresasCount)
         };
         
+        // Adicionando log para depuração
+        //console.log("Dados do resumo enviados para o frontend:", summaryData);
+
         res.json(summaryData);
     } catch (error) {
         console.error("Erro ao buscar resumo da triagem:", error);
@@ -296,6 +232,7 @@ router.patch('/status/:type/:id', protect, isAdmin, async (req, res) => {
         conn = await pool.getConnection();
         await conn.query(`UPDATE ${tableName} SET status = ? WHERE id = ?`, [status, id]);
 
+        // Notifica o admin que confirmou a triagem
         if (status === 'Confirmado') {
              await createNotification(req, req.user.userId, 'new_appointment', `Triagem #${id} (${type}) confirmada por você.`);
         }
@@ -316,21 +253,28 @@ router.delete('/:type/:id', protect, isAdmin, async (req, res) => {
     let conn;
     let tableName;
 
+    // 1. Determina a tabela correta com base no parâmetro 'type'
     switch (type) {
         case 'pacientes': tableName = 'triagem_pacientes'; break;
         case 'profissionais': tableName = 'triagem_profissionais'; break;
         case 'empresas': tableName = 'triagem_empresas'; break;
-        default: return res.status(400).json({ message: 'Tipo de triagem inválido.' });
+        default: 
+            return res.status(400).json({ message: 'Tipo de triagem inválido.' });
     }
 
     try {
         conn = await pool.getConnection();
+
+        // 2. Executa a query para deletar o registro com o ID correspondente
         const result = await conn.query(`DELETE FROM ${tableName} WHERE id = ?`, [id]);
 
+        // 3. Verifica se alguma linha foi de fato deletada
+        // Se result.affectedRows for 0, significa que o ID não foi encontrado
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Registro não encontrado para exclusão.' });
         }
 
+        // 4. Responde com sucesso (204 No Content é o padrão para DELETE bem-sucedido)
         res.status(204).send();
 
     } catch (error) {
@@ -346,16 +290,22 @@ router.get('/nao-confirmados', protect, isAdmin, async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
+
+        // Nota: Removido 'type' fixo nas queries individuais para evitar confusão se o driver retornar metadados
+        // Se o driver retornar [rows], o spread operator funciona.
+        // Se retornar [rows, fields], o 'rows' é o índice 0. O código abaixo assume retorno direto de rows.
         
         const pRows = await conn.query(`SELECT id, nome_completo as nome, email, status, created_at, 'pacientes' as type FROM triagem_pacientes WHERE status COLLATE utf8mb4_general_ci = 'Não confirmado'`);
         const prRows = await conn.query(`SELECT id, nome_completo as nome, email, status, created_at, 'profissionais' as type FROM triagem_profissionais WHERE status COLLATE utf8mb4_general_ci = 'Não confirmado'`);
         const eRows = await conn.query(`SELECT id, nome_empresa as nome, email, status, created_at, 'empresas' as type FROM triagem_empresas WHERE status COLLATE utf8mb4_general_ci = 'Não confirmado'`);
 
+        // Garante que estamos lidando com arrays antes de juntar
         const rowsP = Array.isArray(pRows) ? pRows : [];
         const rowsPr = Array.isArray(prRows) ? prRows : [];
         const rowsE = Array.isArray(eRows) ? eRows : [];
 
         const combinedList = [...rowsP, ...rowsPr, ...rowsE];
+        
         combinedList.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
         
         res.json(serializeBigInts(combinedList));
@@ -477,18 +427,26 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
         
         await conn.query(`DELETE FROM ${sourceTable} WHERE id = ?`, [id]);
 
+        // Confirma a transação do banco ANTES de qualquer outra coisa
         await conn.commit();
 
+        // Notifica o admin que realizou a ação
         await createNotification(req, adminUserId, 'profile_update', `Novo usuário (${type.slice(0,-1)}) criado a partir da triagem #${id}.`);
 
+        
+        // Tenta enviar o e-mail, mas não deixa que uma falha aqui quebre a resposta
         try {
+            // Envia o e-mail com a nova senha temporária correta
             await sendWelcomeEmail(triagemData.email, tempPasswordSource); 
+            
+            // Se o e-mail foi enviado com sucesso, envia a resposta de sucesso
             return res.status(201).json({ 
                 message: `Usuário ${type.slice(0, -1)} criado com sucesso! E-mail de boas-vindas enviado.`,
                 tempPassword: tempPasswordSource
             });
         } catch (emailError) {
             console.error("### AVISO: A migração do usuário foi um sucesso, mas o envio de e-mail falhou. ###");
+            // Se o e-mail falhou, responde informando o admin, mas ainda com status de sucesso na migração
             return res.status(201).json({ 
                 message: `Usuário ${type.slice(0, -1)} criado, MAS O E-MAIL DE BOAS-VINDAS FALHOU.`,
                 tempPassword: tempPasswordSource
@@ -498,6 +456,7 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
     } catch (error) {
         if (conn) await conn.rollback();
         console.error(`Erro ao confirmar triagem de ${type}:`, error);
+        // Só envia esta resposta se a transação do banco falhar
         res.status(500).json({ message: 'Erro interno ao confirmar cadastro.' });
     } finally {
         if (conn) conn.release();
@@ -505,12 +464,14 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
 });
 
 
-// Busca reuniões confirmadas
+// Busca reuniões confirmadas juntando com os dados do usuário para exibição no painel
 router.get('/scheduled', protect, isAdmin, async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
         
+        // CORREÇÃO AQUI: Trocado 'availability_slots' por 'admin_availability'
+        // E ajustado o filtro de status para bater com o ENUM do seu banco ('Confirmado')
         const query = `
             SELECT 
                 a.id, 
