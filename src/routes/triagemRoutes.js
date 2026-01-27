@@ -58,7 +58,7 @@ router.post('/paciente', async (req, res) => {
     const genero = b.genero;
     const endereco = b.endereco;
     const cidade = b.cidade;
-    const estado = b.estado; 
+    const estado = b.estado ? b.estado.substring(0, 2).toUpperCase() : null;
     
     // Campos JSON/Arrays
     const terapia_buscada_val = b.terapia_buscada || b.motivo || [];
@@ -106,7 +106,7 @@ router.post('/empresa', async (req, res) => {
     const cargo_responsavel = b.cargo_responsavel || b.cargo;
     const telefone = b.telefone || b.celular;
     const caracterizacao_demanda = b.caracterizacao_demanda || b.demanda;
-    const estado = b.estado; // <--- NOVO CAMPO
+    const estado = b.estado ? b.estado.substring(0, 2).toUpperCase() : null;
     
     // Tratamento de JSON
     const tipo_atendimento_val = b.tipo_atendimento_desejado || [];
@@ -149,7 +149,7 @@ router.post('/profissional', async (req, res) => {
     const email = b.email;
     const endereco = b.endereco;
     const cidade = b.cidade;
-    const estado = b.estado; // <--- NOVO CAMPO
+    const estado = b.estado ? b.estado.substring(0, 2).toUpperCase() : null;
     const telefone = b.telefone || b.celular;
     
     let data_nascimento = b.data_nascimento;
