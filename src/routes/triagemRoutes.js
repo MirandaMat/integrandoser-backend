@@ -46,16 +46,20 @@ const notifyAdmins = async (req, type, message) => {
 router.post('/paciente', async (req, res) => {
     const b = req.body;
     
-    // Mapeamento flexível: Procura o valor no ID correto ou em variações comuns
-    // Isso previne o erro "Column cannot be null" se o frontend mandar um ID diferente
+    // Mapeamento flexível
     const nome_completo = b.nome_completo || b.nome || b.name || b.fullname;
     const email = b.email || b.e_mail;
     const telefone = b.telefone || b.celular || b.whatsapp;
+    
+    // Tratamento de data de nascimento (evitar string vazia)
+    let data_nascimento = b.data_nascimento;
+    if (!data_nascimento || data_nascimento === '') data_nascimento = null;
+
     const genero = b.genero;
     const endereco = b.endereco;
     const cidade = b.cidade;
     
-    // Campos JSON/Arrays: Garante que sejam strings JSON antes de salvar
+    // Campos JSON/Arrays
     const terapia_buscada_val = b.terapia_buscada || b.motivo || [];
     const terapia_buscada = Array.isArray(terapia_buscada_val) ? JSON.stringify(terapia_buscada_val) : JSON.stringify([terapia_buscada_val]);
     
@@ -68,18 +72,19 @@ router.post('/paciente', async (req, res) => {
 
     // Validação Básica
     if (!nome_completo) {
-        return res.status(400).json({ message: "Erro: O campo 'Nome Completo' é obrigatório. Verifique a configuração do formulário." });
+        return res.status(400).json({ message: "Erro: O campo 'Nome Completo' é obrigatório." });
     }
     if (!email) {
-        return res.status(400).json({ message: "Erro: O campo 'Email' é obrigatório. Verifique a configuração do formulário." });
+        return res.status(400).json({ message: "Erro: O campo 'Email' é obrigatório." });
     }
 
     let conn;
     try {
         conn = await pool.getConnection();
+        // CORREÇÃO: Inserção do campo data_nascimento
         await conn.query(
-            "INSERT INTO triagem_pacientes (nome_completo, email, genero, telefone, endereco, cidade, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nome_completo, email, genero, telefone, endereco, cidade, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos]
+            "INSERT INTO triagem_pacientes (nome_completo, email, data_nascimento, genero, telefone, endereco, cidade, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nome_completo, email, data_nascimento, genero, telefone, endereco, cidade, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos]
         );
 
         await notifyAdmins(req, 'new_triage', `Nova triagem de paciente pendente: ${nome_completo}.`);
@@ -148,6 +153,11 @@ router.post('/profissional', async (req, res) => {
     const endereco = b.endereco;
     const cidade = b.cidade;
     const telefone = b.telefone || b.celular;
+    
+    // Tratamento de data de nascimento (evitar string vazia)
+    let data_nascimento = b.data_nascimento;
+    if (!data_nascimento || data_nascimento === '') data_nascimento = null;
+
     const nivel_profissional = b.nivel_profissional;
     const aluno_tavola = b.aluno_tavola; // checkbox
     const modalidade = b.modalidade;
@@ -165,9 +175,10 @@ router.post('/profissional', async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
+        // CORREÇÃO: Inserção do campo data_nascimento
         await conn.query(
-            "INSERT INTO triagem_profissionais (nome_completo, email, endereco, cidade, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nome_completo, email, endereco, cidade, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes]
+            "INSERT INTO triagem_profissionais (nome_completo, email, data_nascimento, endereco, cidade, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nome_completo, email, data_nascimento, endereco, cidade, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes]
         );
 
         await notifyAdmins(req, 'new_triage', `Nova triagem de profissional pendente: ${nome_completo}.`);
@@ -180,6 +191,7 @@ router.post('/profissional', async (req, res) => {
         if (conn) conn.release();
     }
 });
+
 
 // GET /api/triagem/summary - Busca a contagem de pendentes para os cards
 router.get('/summary', protect, isAdmin, async (req, res) => {
@@ -443,18 +455,31 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
         let profileData = {};
         if (type === 'pacientes') {
             profileData = {
-                user_id: newUserId, nome: triagemData.nome_completo, genero: triagemData.genero,
-                telefone: triagemData.telefone, endereco: triagemData.endereco, cidade: triagemData.cidade,
-                modalidade_atendimento: triagemData.modalidade, profissao: triagemData.profissao, 
+                user_id: newUserId, 
+                nome: triagemData.nome_completo, 
+                genero: triagemData.genero,
+                data_nascimento: triagemData.data_nascimento, // CORREÇÃO: Campo Adicionado
+                telefone: triagemData.telefone, 
+                endereco: triagemData.endereco, 
+                cidade: triagemData.cidade,
+                modalidade_atendimento: triagemData.modalidade, 
+                profissao: triagemData.profissao, 
                 renda: parseFloat(triagemData.renda_familiar?.match(/[\d,.]+/g)?.join('').replace('.', '').replace(',', '.') || 0),
                 preferencia_gen_atend: triagemData.preferencia_genero_profissional,
                 tipo_atendimento: JSON.stringify(triagemData.terapia_buscada)
             };
         } else if (type === 'profissionais') {
             profileData = {
-                user_id: newUserId, nome: triagemData.nome_completo, email: triagemData.email, endereco: triagemData.endereco,
-                cidade: triagemData.cidade, telefone: triagemData.telefone, modalidade_atendimento: triagemData.modalidade,
-                especialidade: triagemData.especialidade, abordagem: triagemData.palavras_chave_abordagens,
+                user_id: newUserId, 
+                nome: triagemData.nome_completo, 
+                email: triagemData.email, 
+                data_nascimento: triagemData.data_nascimento, // CORREÇÃO: Campo Adicionado
+                endereco: triagemData.endereco,
+                cidade: triagemData.cidade, 
+                telefone: triagemData.telefone, 
+                modalidade_atendimento: triagemData.modalidade,
+                especialidade: triagemData.especialidade, 
+                abordagem: triagemData.palavras_chave_abordagens,
                 level: triagemData.nivel_profissional === 'Estudante' ? 'Estagiário' : 'Profissional'
             };
         } else if (type === 'empresas') {
