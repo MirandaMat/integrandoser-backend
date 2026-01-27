@@ -709,4 +709,37 @@ router.get('/services/:slug', async (req, res) => {
     }
 });
 
+// =========== Formularios de Contato ===========
+// GET /api/content/triagem-config/:type
+router.get('/triagem-config/:type', async (req, res) => {
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        const rows = await conn.query("SELECT * FROM triagem_forms_config WHERE form_type = ?", [req.params.type]);
+        res.json(serializeBigInts(rows[0] || {}));
+    } catch (error) {
+        res.status(500).json({ message: 'Erro ao buscar configuração.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+// PUT /api/content/triagem-config/:type
+router.put('/triagem-config/:type', protect, isAdmin, async (req, res) => {
+    const { title, description, fields } = req.body;
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        await conn.query(
+            "UPDATE triagem_forms_config SET title = ?, description = ?, fields = ? WHERE form_type = ?",
+            [title, description, JSON.stringify(fields), req.params.type]
+        );
+        res.json({ message: 'Formulário atualizado com sucesso!' });
+    } catch (error) {
+        res.status(500).json({ message: 'Erro ao salvar configuração.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
 module.exports = router;
