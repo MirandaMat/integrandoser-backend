@@ -2,7 +2,6 @@ const express = require('express');
 const pool = require('../config/db.js');
 const { protect, isAdmin } = require('../middleware/authMiddleware.js');
 const upload = require('../middleware/uploadMiddleware.js');
-const { protect, isAdmin } = require('../middleware/authMiddleware.js');
 const router = express.Router();
 
 // Função auxiliar para converter BigInt para String
