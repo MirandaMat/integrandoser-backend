@@ -710,6 +710,8 @@ router.get('/services/:slug', async (req, res) => {
 });
 
 // =========== Formularios de Contato ===========
+// =========== Formularios de Contato ===========
+
 // GET: Buscar configuração do formulário
 router.get('/triagem-config/:type', async (req, res) => {
     let conn;
@@ -717,10 +719,13 @@ router.get('/triagem-config/:type', async (req, res) => {
         const { type } = req.params;
         conn = await pool.getConnection();
         
-        // Verifica se existe configuração para este tipo (paciente, empresa, profissional)
-        const [rows] = await conn.query("SELECT * FROM triagem_forms_config WHERE form_type = ?", [type]);
+        // CORREÇÃO: Removemos os colchetes [rows] para pegar o resultado completo
+        const result = await conn.query("SELECT * FROM triagem_forms_config WHERE form_type = ?", [type]);
         
-        if (rows.length > 0) {
+        // Tratamento robusto para garantir que 'rows' seja um array, independente do driver (mysql2 padrão ou wrapper)
+        const rows = (Array.isArray(result) && Array.isArray(result[0])) ? result[0] : result;
+        
+        if (rows && rows.length > 0) {
             const config = rows[0];
             // Garante que 'fields' seja retornado como JSON (Objeto), não como string
             if (typeof config.fields === 'string') {
@@ -749,7 +754,6 @@ router.get('/triagem-config/:type', async (req, res) => {
 });
 
 // PUT: Atualizar configuração do formulário
-// CORREÇÃO: Usando 'protect' e 'isAdmin' que já existem no seu authMiddleware.js
 router.put('/triagem-config/:type', protect, isAdmin, async (req, res) => {
     let conn;
     try {
@@ -766,11 +770,14 @@ router.put('/triagem-config/:type', protect, isAdmin, async (req, res) => {
         // Converte o array de campos para string JSON para salvar no MySQL
         const fieldsJson = JSON.stringify(fields);
 
-        // Tenta atualizar primeiro
-        const [updateResult] = await conn.query(
+        // CORREÇÃO: Removemos a desestruturação [updateResult]
+        const result = await conn.query(
             "UPDATE triagem_forms_config SET title = ?, description = ?, fields = ? WHERE form_type = ?",
             [title, description, fieldsJson, type]
         );
+
+        // Garante acesso correto ao objeto de resultado (OkPacket)
+        const updateResult = Array.isArray(result) ? result[0] : result;
 
         // Se não atualizou nenhuma linha (significa que ainda não existe), faz o INSERT
         if (updateResult.affectedRows === 0) {
@@ -788,7 +795,6 @@ router.put('/triagem-config/:type', protect, isAdmin, async (req, res) => {
         if (conn) conn.release();
     }
 });
-
 
 
 module.exports = router;
