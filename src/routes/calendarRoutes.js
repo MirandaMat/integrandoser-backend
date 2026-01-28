@@ -5,14 +5,31 @@ const { protect, isAdmin, isProfissional } = require('../middleware/authMiddlewa
 const router = express.Router();
 
 const serializeData = (data) => {
+    // Se data for null ou undefined, retorna array vazio imediatamente
     if (!data) return [];
-    // Garante que pegamos apenas as linhas de dados do Pool
-    const rows = (Array.isArray(data) && !Array.isArray(data[0])) ? data : (data[0] || []);
-    
+
+    // Lógica para extrair linhas dependendo do driver (MariaDB/MySQL2)
+    let rows = [];
+    if (Array.isArray(data)) {
+        // Se for [[rows], fields]
+        if (Array.isArray(data[0])) {
+            rows = data[0];
+        } else {
+            rows = data;
+        }
+    } else if (data.rows) {
+        rows = data.rows;
+    }
+
     return rows.map(item => {
         const newItem = {};
         for (const key in item) {
-            newItem[key] = typeof item[key] === 'bigint' ? item[key].toString() : item[key];
+            // Converte BigInt para string e lida com datas
+            if (typeof item[key] === 'bigint') {
+                newItem[key] = item[key].toString();
+            } else {
+                newItem[key] = item[key];
+            }
         }
         return newItem;
     });
