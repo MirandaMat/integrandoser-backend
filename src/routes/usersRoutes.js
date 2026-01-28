@@ -320,12 +320,12 @@ router.patch('/admin/transfer-patient', protect, isAdmin, async (req, res) => {
         );
 
         // 4. Migração da Agenda:
-        // Transfere os agendamentos FUTUROS do antigo para o novo.
-        // Ao fazer o UPDATE, o agendamento some da lista do antigo e aparece na do novo (equivalente a copiar e apagar).
         let appointmentsMoved = 0;
         
         if (oldProfessionalId && oldProfessionalId != newProfessionalId) {
-            const [updateResult] = await conn.query(
+            // CORREÇÃO AQUI: Removemos a desestruturação direta "const [updateResult]"
+            // para evitar o erro "is not iterable" caso o driver retorne o objeto direto.
+            const queryResult = await conn.query(
                 `UPDATE appointments 
                  SET professional_id = ? 
                  WHERE patient_id = ? 
@@ -334,6 +334,10 @@ router.patch('/admin/transfer-patient', protect, isAdmin, async (req, res) => {
                    AND appointment_time >= NOW()`, 
                 [newProfessionalId, patientId, oldProfessionalId]
             );
+
+            // Verifica se o resultado é um array (padrão mysql2/promise) ou objeto direto
+            const updateResult = Array.isArray(queryResult) ? queryResult[0] : queryResult;
+            
             appointmentsMoved = updateResult.affectedRows;
         }
 
