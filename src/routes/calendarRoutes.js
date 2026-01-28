@@ -42,9 +42,10 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
 
         // 1. Consultas de Agendamentos
         const appointments = await conn.query(`
-            SELECT a.id, a.id as original_id, a.series_id, a.status, a.session_value, a.patient_id, a.professional_id,
-                   CONCAT('Consulta: ', pat.nome, ' com ', prof.nome) as title,
-                   a.appointment_time as start, 'consulta' as type
+            SELECT a.id, a.id as original_id, a.series_id, a.status, a.session_value, 
+                a.patient_id, a.professional_id, pat.company_id, -- Adicione esses campos
+                CONCAT('Consulta: ', pat.nome, ' com ', prof.nome) as title,
+                a.appointment_time as start, 'consulta' as type
             FROM appointments a
             JOIN professionals prof ON a.professional_id = prof.id
             JOIN patients pat ON a.patient_id = pat.id
@@ -88,7 +89,8 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
 
         const appointments = await conn.query(`
             SELECT a.id, a.id as original_id, a.series_id, a.status, a.session_value,
-                   CONCAT('Consulta: ', p.nome) as title, a.appointment_time as start, 'consulta' as type
+                a.patient_id, a.professional_id, -- Adicione esses campos
+                CONCAT('Consulta: ', p.nome) as title, a.appointment_time as start, 'consulta' as type
             FROM appointments a
             JOIN patients p ON a.patient_id = p.id
             WHERE a.professional_id = ?
