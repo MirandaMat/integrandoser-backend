@@ -163,14 +163,23 @@ router.post('/profissional', async (req, res) => {
     let data_nascimento = b.data_nascimento;
     if (!data_nascimento || data_nascimento === '') data_nascimento = null;
 
-    const nivel_profissional = b.nivel_profissional;
-    const aluno_tavola = b.aluno_tavola; 
+    const parseBoolean = (val) => {
+        if (!val) return 0;
+        if (typeof val === 'string') {
+            const v = val.toLowerCase().trim();
+            return (v === 'sim' || v === 's' || v === 'yes' || v === 'true' || v === '1') ? 1 : 0;
+        }
+        return val ? 1 : 0;
+    };
+
+    const aluno_tavola = parseBoolean(b.aluno_tavola);
+    const faz_supervisao = parseBoolean(b.faz_supervisao);
+    const faz_analise_pessoal = parseBoolean(b.faz_analise_pessoal);
+
     const modalidade = b.modalidade;
     const especialidade = b.especialidade;
     const instituicao_formacao = b.instituicao_formacao;
-    const faz_supervisao = b.faz_supervisao;
     const palavras_chave_abordagens = b.palavras_chave_abordagens || b.abordagem;
-    const faz_analise_pessoal = b.faz_analise_pessoal;
     const duvidas_sugestoes = b.duvidas_sugestoes;
 
     if (!nome_completo || !email) {
