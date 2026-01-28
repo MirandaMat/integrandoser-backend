@@ -200,45 +200,64 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
                 p.imagem_url,
                 p.billing_type,      
                 p.billing_due_day,
-                p.session_price, -- Valor do contrato
+                p.session_price,
+                p.responsible_professional_id, 
                 u.created_at, 
                 u.email,
                 u.status,
-                
-                (SELECT COUNT(*) 
-                 FROM appointments a 
-                 WHERE a.patient_id = p.id AND a.professional_id = ? AND a.status = 'Concluída') as total_sessions,
 
-                -- Lógica Prioritária: 
-                -- 1. Tenta pegar o 'session_price' (contrato no perfil)
-                -- 2. Se for nulo/zero, tenta pegar o valor da última sessão agendada/concluída
-                -- 3. Se não tiver nada, retorna 0
+                -- NOVA LÓGICA: Define se é o dono (pode editar/agendar) ou apenas visualizador (histórico)
+                -- Parâmetro 1
+                CASE 
+                    WHEN p.responsible_professional_id = ? THEN 1 
+                    ELSE 0 
+                END as is_owner,
+
+                -- Contagem de sessões (Apenas deste profissional)
+                -- Parâmetro 2
+                (SELECT COUNT(*) 
+                FROM appointments a 
+                WHERE a.patient_id = p.id AND a.professional_id = ? AND a.status = 'Concluída') as total_sessions,
+
+                -- Lógica de Valor Atual (Contrato ou Última Sessão)
+                -- Parâmetro 3
                 COALESCE(
                     NULLIF(p.session_price, 0),
                     (SELECT session_value 
-                     FROM appointments a 
-                     WHERE a.patient_id = p.id AND a.professional_id = ? 
-                     ORDER BY a.appointment_time DESC LIMIT 1), 
+                    FROM appointments a 
+                    WHERE a.patient_id = p.id AND a.professional_id = ? 
+                    ORDER BY a.appointment_time DESC LIMIT 1), 
                 0) as current_value,
 
+                -- Data da Última Sessão
+                -- Parâmetro 4
                 (SELECT appointment_time 
-                 FROM appointments a 
-                 WHERE a.patient_id = p.id AND a.professional_id = ? 
-                 ORDER BY a.appointment_time DESC LIMIT 1) as last_session_date
+                FROM appointments a 
+                WHERE a.patient_id = p.id AND a.professional_id = ? 
+                ORDER BY a.appointment_time DESC LIMIT 1) as last_session_date
 
             FROM patients p
             JOIN users u ON p.user_id = u.id
             LEFT JOIN appointments a ON p.id = a.patient_id
-            WHERE a.professional_id = ? OR p.created_by_professional_id = ?
+            
+            -- FILTRO ATUALIZADO (A Lógica da Nova Funcionalidade):
+            -- Mostra o paciente se:
+            -- 1. O profissional logado é o RESPONSÁVEL ATUAL (p.responsible...)
+            -- 2. OU se o profissional logado tem HISTÓRICO (a.professional_id...)
+            -- Parâmetros 5 e 6
+            WHERE p.responsible_professional_id = ? OR a.professional_id = ?
+            
             ORDER BY p.nome ASC;
         `;
-        
+
+        // Execução da query com os parâmetros na ordem correta
         const patientsResult = await conn.query(patientsQuery, [
-            professionalId, 
-            professionalId, 
-            professionalId, 
-            professionalId, 
-            professionalId
+            professionalId, // 1. Para o CASE is_owner
+            professionalId, // 2. Para total_sessions
+            professionalId, // 3. Para current_value
+            professionalId, // 4. Para last_session_date
+            professionalId, // 5. Para WHERE responsible_professional_id
+            professionalId  // 6. Para WHERE appointments.professional_id
         ]);
         const patients = Array.isArray(patientsResult) && Array.isArray(patientsResult[0]) ? patientsResult[0] : patientsResult;
 
@@ -260,6 +279,37 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
     }
 });
 
+
+// PATCH /api/users/admin/transfer-patient
+router.patch('/admin/transfer-patient', protect, isAdmin, async (req, res) => {
+    const { patientId, newProfessionalId } = req.body;
+
+    if (!patientId || !newProfessionalId) {
+        return res.status(400).json({ message: 'IDs do paciente e do novo profissional são obrigatórios.' });
+    }
+
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        
+        // Verifica se o novo profissional existe
+        const [prof] = await conn.query("SELECT id FROM professionals WHERE id = ?", [newProfessionalId]);
+        if (!prof) return res.status(404).json({ message: 'Profissional não encontrado.' });
+
+        // Atualiza APENAS o responsável atual (mantém appointments e created_by como histórico)
+        await conn.query(
+            "UPDATE patients SET responsible_professional_id = ? WHERE id = ?", 
+            [newProfessionalId, patientId]
+        );
+
+        res.json({ message: 'Paciente transferido com sucesso.' });
+    } catch (error) {
+        console.error("Erro ao transferir paciente:", error);
+        res.status(500).json({ message: 'Erro ao transferir paciente.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
 
 // GET /api/users/:id - Busca um usuário específico com perfil
 /* 
