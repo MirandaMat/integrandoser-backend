@@ -1633,8 +1633,8 @@ router.put('/professional/appointments/:id', protect, isProfissional, async (req
         await conn.beginTransaction();
 
         // 1. Obter ID do Profissional (CORREÇÃO DE DESESTRUTURAÇÃO)
-        const [profRows] = await conn.query("SELECT id, nome FROM professionals WHERE user_id = ?", [userId]);
-        const profProfile = profRows[0];
+        const [profProfile] = await conn.query("SELECT id, nome FROM professionals WHERE user_id = ?", [userId]);
+        // Removido: const profProfile = profRows[0];
 
         if (!profProfile) {
             await conn.rollback();
@@ -1644,7 +1644,7 @@ router.put('/professional/appointments/:id', protect, isProfissional, async (req
 
         // 2. Buscar agendamento original (CORREÇÃO DE DESESTRUTURAÇÃO)
         const [appRows] = await conn.query("SELECT * FROM appointments WHERE id = ? AND professional_id = ?", [id, professionalId]);
-        const originalAppointment = appRows[0];
+        const originalAppointment = Array.isArray(appRows) ? appRows[0] : appRows;
         
         if (!originalAppointment) {
             await conn.rollback();
