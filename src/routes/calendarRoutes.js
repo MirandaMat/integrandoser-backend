@@ -5,31 +5,19 @@ const { protect, isAdmin, isProfissional } = require('../middleware/authMiddlewa
 const router = express.Router();
 
 const serializeData = (data) => {
-    // Se data for null ou undefined, retorna array vazio imediatamente
     if (!data) return [];
-
-    // Lógica para extrair linhas dependendo do driver (MariaDB/MySQL2)
     let rows = [];
     if (Array.isArray(data)) {
-        // Se for [[rows], fields]
-        if (Array.isArray(data[0])) {
-            rows = data[0];
-        } else {
-            rows = data;
-        }
+        if (Array.isArray(data[0])) rows = data[0];
+        else rows = data;
     } else if (data.rows) {
         rows = data.rows;
     }
-
     return rows.map(item => {
         const newItem = {};
         for (const key in item) {
-            // Converte BigInt para string e lida com datas
-            if (typeof item[key] === 'bigint') {
-                newItem[key] = item[key].toString();
-            } else {
-                newItem[key] = item[key];
-            }
+            if (typeof item[key] === 'bigint') newItem[key] = item[key].toString();
+            else newItem[key] = item[key];
         }
         return newItem;
     });
@@ -40,25 +28,25 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
     try {
         conn = await pool.getConnection();
 
-        // 1. Consultas de Agendamentos
+        // ALTERAÇÃO: Adicionado LEFT JOIN com appointment_series e campo s.frequency
         const appointments = await conn.query(`
             SELECT a.id, a.id as original_id, a.series_id, a.status, a.session_value, 
-                a.patient_id, a.professional_id, pat.company_id, -- Adicione esses campos
+                a.patient_id, a.professional_id, pat.company_id,
+                s.frequency, -- Campo Novo
                 CONCAT('Consulta: ', pat.nome, ' com ', prof.nome) as title,
                 a.appointment_time as start, 'consulta' as type
             FROM appointments a
             JOIN professionals prof ON a.professional_id = prof.id
             JOIN patients pat ON a.patient_id = pat.id
+            LEFT JOIN appointment_series s ON a.series_id = s.id -- Join Novo
         `);
 
-        // 2. Slots de Disponibilidade de Triagem
         const slots = await conn.query(`
             SELECT CONCAT('slot-', id) as id, id as original_id, 'Horário de triagem disponível' as title,
                    start_time as start, 'Disponível' as status, 'triagem_disponivel' as type
             FROM admin_availability WHERE is_booked = FALSE AND start_time > NOW()
         `);
 
-        // 3. Compromissos Pessoais
         const personal = await conn.query(`
             SELECT id, id as original_id, title, start_time as start, end_time as end,
                    status, color, description, 'pessoal' as type
@@ -67,7 +55,7 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
 
         res.json({
             appointments: serializeData(appointments),
-            screeningAppointments: [], // Preenchido se necessário
+            screeningAppointments: [],
             availableSlots: serializeData(slots),
             personalAppointments: serializeData(personal)
         });
@@ -87,12 +75,15 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
         const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
         if (!prof) return res.status(404).json({ message: 'Perfil não encontrado.' });
 
+        // ALTERAÇÃO: Adicionado LEFT JOIN com appointment_series e campo s.frequency
         const appointments = await conn.query(`
             SELECT a.id, a.id as original_id, a.series_id, a.status, a.session_value,
-                a.patient_id, a.professional_id, -- Adicione esses campos
+                a.patient_id, a.professional_id,
+                s.frequency, -- Campo Novo
                 CONCAT('Consulta: ', p.nome) as title, a.appointment_time as start, 'consulta' as type
             FROM appointments a
             JOIN patients p ON a.patient_id = p.id
+            LEFT JOIN appointment_series s ON a.series_id = s.id -- Join Novo
             WHERE a.professional_id = ?
         `, [prof.id]);
 

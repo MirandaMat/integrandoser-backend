@@ -421,11 +421,18 @@ router.delete('/appointments/:id', protect, isAdmin, async (req, res) => {
     }
 });
 
-
+/*
 // Rota para o ADMIN ATUALIZAR um agendamento
 router.put('/appointments/:id', protect, isAdmin, async (req, res) => {
     const { id } = req.params;
-    const { professional_id, patient_id, company_id, appointment_time, session_value } = req.body;
+    const { professional_id, 
+            patient_id, 
+            company_id, 
+            appointment_time, 
+            session_value,
+            frequency, 
+            updateType
+        } = req.body;
 
     let conn;
     try {
@@ -539,6 +546,168 @@ router.put('/appointments/:id', protect, isAdmin, async (req, res) => {
         }
 
         res.json({ message: 'Agendamento atualizado com sucesso!' });
+    } catch (error) {
+        if (conn) await conn.rollback();
+        console.error("Erro ao atualizar agendamento:", error);
+        res.status(500).json({ message: 'Erro ao atualizar agendamento.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+*/
+
+router.put('/appointments/:id', protect, isAdmin, async (req, res) => {
+    const { id } = req.params;
+    const { 
+        professional_id, 
+        patient_id, 
+        company_id, 
+        appointment_time, 
+        session_value,
+        frequency, // 'Único', 'Semanal', 'Quinzenal'
+        updateType 
+    } = req.body;
+
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        await conn.beginTransaction();
+
+        // 1. Busca o agendamento original
+        const [rows] = await conn.query("SELECT * FROM appointments WHERE id = ?", [id]);
+        const originalAppointment = rows[0];
+        
+        if (!originalAppointment) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Agendamento não encontrado.' });
+        }
+
+        const oldSeriesId = originalAppointment.series_id;
+        const finalTime = appointment_time ? new Date(appointment_time) : new Date(originalAppointment.appointment_time);
+        const finalPatientId = patient_id !== undefined ? patient_id : originalAppointment.patient_id;
+        const finalProfId = professional_id !== undefined ? professional_id : originalAppointment.professional_id;
+
+        // --- LÓGICA DE RECORRÊNCIA ---
+
+        // CASO A: Era ÚNICO e virou RECORRENTE
+        if (!oldSeriesId && (frequency === 'Semanal' || frequency === 'Quinzenal')) {
+            const newSeriesId = `series_${Date.now()}`;
+            const intervalDays = frequency === 'Semanal' ? 7 : 14;
+
+            // Atualiza o atual para ter a nova série
+            await conn.query(
+                "UPDATE appointments SET series_id = ?, frequency = ? WHERE id = ?",
+                [newSeriesId, frequency, id]
+            );
+
+            // Cria 12 eventos futuros
+            let nextDate = new Date(finalTime);
+            for (let i = 1; i <= 12; i++) {
+                nextDate.setDate(nextDate.getDate() + intervalDays);
+                await conn.query(
+                    `INSERT INTO appointments (patient_id, professional_id, appointment_time, series_id, frequency, status, session_value) 
+                     VALUES (?, ?, ?, ?, ?, 'Agendada', ?)`,
+                    [finalPatientId, finalProfId, new Date(nextDate), newSeriesId, frequency, session_value || originalAppointment.session_value]
+                );
+            }
+        }
+
+        // CASO B: Era RECORRENTE e virou ÚNICO
+        else if (oldSeriesId && frequency === 'Único') {
+            // Apaga os futuros da série antiga
+            await conn.query(
+                "DELETE FROM appointments WHERE series_id = ? AND appointment_time > ? AND status = 'Agendada'",
+                [oldSeriesId, originalAppointment.appointment_time]
+            );
+
+            // Remove o vínculo de série do atual
+            await conn.query(
+                "UPDATE appointments SET series_id = NULL, frequency = 'Único' WHERE id = ?",
+                [id]
+            );
+        }
+
+        // CASO C: Mudança de intervalo (ex: Semanal -> Quinzenal)
+        else if (oldSeriesId && frequency && frequency !== originalAppointment.frequency && frequency !== 'Único') {
+            // Remove futuros e recria com o novo intervalo
+            await conn.query(
+                "DELETE FROM appointments WHERE series_id = ? AND appointment_time > ? AND status = 'Agendada'",
+                [oldSeriesId, originalAppointment.appointment_time]
+            );
+            
+            const intervalDays = frequency === 'Semanal' ? 7 : 14;
+            let nextDate = new Date(finalTime);
+            for (let i = 1; i <= 12; i++) {
+                nextDate.setDate(nextDate.getDate() + intervalDays);
+                await conn.query(
+                    `INSERT INTO appointments (patient_id, professional_id, appointment_time, series_id, frequency, status, session_value) 
+                     VALUES (?, ?, ?, ?, ?, 'Agendada', ?)`,
+                    [finalPatientId, finalProfId, new Date(nextDate), oldSeriesId, frequency, session_value || originalAppointment.session_value]
+                );
+            }
+            // Atualiza a frequência no registro atual
+            await conn.query("UPDATE appointments SET frequency = ? WHERE id = ?", [frequency, id]);
+        }
+
+        // --- LÓGICA DE ATUALIZAÇÃO DOS CAMPOS BÁSICOS (Se não for mudança de recorrência total) ---
+        
+        // Se houver alteração de horário e ainda for uma série (e não mudou para único agora)
+        if (appointment_time && oldSeriesId && frequency !== 'Único') {
+            const oldTime = new Date(originalAppointment.appointment_time);
+            const diffInMs = finalTime.getTime() - oldTime.getTime();
+            
+            if (diffInMs !== 0) {
+                const diffInSeconds = Math.round(diffInMs / 1000);
+                await conn.query(
+                    `UPDATE appointments 
+                     SET appointment_time = DATE_ADD(appointment_time, INTERVAL ? SECOND)
+                     WHERE series_id = ? AND id != ? AND appointment_time > ? AND status = 'Agendada'`,
+                    [diffInSeconds, oldSeriesId, id, originalAppointment.appointment_time]
+                );
+            }
+        }
+
+        // Atualização dinâmica do evento ATUAL
+        const fieldsToUpdate = [];
+        const values = [];
+
+        if (professional_id !== undefined) { fieldsToUpdate.push('professional_id = ?'); values.push(professional_id); }
+        if (patient_id !== undefined) { fieldsToUpdate.push('patient_id = ?'); values.push(patient_id); }
+        if (appointment_time !== undefined) { fieldsToUpdate.push('appointment_time = ?'); values.push(appointment_time); }
+        if (session_value !== undefined) { fieldsToUpdate.push('session_value = ?'); values.push(session_value); }
+
+        if (fieldsToUpdate.length > 0) {
+            const query = `UPDATE appointments SET ${fieldsToUpdate.join(', ')} WHERE id = ?`;
+            values.push(id);
+            await conn.query(query, values);
+        }
+
+        if (company_id !== undefined) {
+            await conn.query('UPDATE patients SET company_id = ? WHERE id = ?', [company_id, finalPatientId]);
+        }
+        
+        await conn.commit();
+
+        // --- NOTIFICAÇÕES (Mantidas conforme seu original) ---
+        const [patientUser] = await conn.query("SELECT user_id FROM patients WHERE id = ?", [finalPatientId]);
+        const [profUser] = await conn.query("SELECT user_id FROM professionals WHERE id = ?", [finalProfId]);
+        const appointmentDate = finalTime.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+
+        if (patientUser && patientUser.user_id) {
+            await createNotification(req, patientUser.user_id, 'appointment_rescheduled', `Seu agendamento foi alterado para ${appointmentDate}.`, '/paciente/agenda');
+            
+            const [userPhoneData] = await conn.query("SELECT telefone, nome FROM users u JOIN patients p ON p.user_id = u.id WHERE u.id = ?", [patientUser.user_id]);
+            const [profNameData] = await conn.query("SELECT nome FROM professionals WHERE id = ?", [finalProfId]);
+            
+            if (userPhoneData?.telefone && profNameData) {
+                await sendWhatsAppRescheduled(userPhoneData.telefone, userPhoneData.nome, profNameData.nome, finalTime);
+            }
+        }
+        if (profUser?.user_id) {
+            await createNotification(req, profUser.user_id, 'appointment_rescheduled', `Um agendamento foi alterado para ${appointmentDate}.`, '/professional/agenda');
+        }
+
+        res.json({ message: 'Agendamento e recorrência atualizados com sucesso!' });
     } catch (error) {
         if (conn) await conn.rollback();
         console.error("Erro ao atualizar agendamento:", error);
@@ -1321,6 +1490,7 @@ router.post('/professional/appointments', protect, isProfissional, async (req, r
     }
 });
 
+/*
 router.put('/professional/appointments/:id', protect, isProfissional, async (req, res) => {
     const { id } = req.params;
     const { patient_id, appointment_time, session_value } = req.body;
@@ -1433,6 +1603,180 @@ router.put('/professional/appointments/:id', protect, isProfissional, async (req
     } catch (error) {
         if (conn) await conn.rollback();
         console.error("Erro ao atualizar agendamento:", error);
+        res.status(500).json({ message: 'Erro interno ao atualizar o agendamento.' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+*/
+
+// Rota para o PROFISSIONAL atualizar um agendamento (COM LOGICA DE RECORRÊNCIA)
+router.put('/professional/appointments/:id', protect, isProfissional, async (req, res) => {
+    const { id } = req.params;
+    const { 
+        patient_id, 
+        appointment_time, 
+        session_value,
+        frequency // 'Evento Único', 'Semanalmente', 'Quinzenalmente'
+    } = req.body;
+    
+    const { userId } = req.user;
+
+    // Validação básica
+    if (!patient_id || !appointment_time) {
+        return res.status(400).json({ message: 'Paciente e data/hora são obrigatórios.' });
+    }
+
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        await conn.beginTransaction();
+
+        // 1. Obter ID do Profissional
+        const [profProfile] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        if (!profProfile) {
+            await conn.rollback();
+            return res.status(403).json({ message: 'Perfil profissional não encontrado.' });
+        }
+        const professionalId = profProfile.id;
+
+        // 2. Buscar agendamento original
+        const [rows] = await conn.query("SELECT * FROM appointments WHERE id = ? AND professional_id = ?", [id, professionalId]);
+        const originalAppointment = rows[0];
+        
+        if (!originalAppointment) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Agendamento não encontrado.' });
+        }
+
+        const oldSeriesId = originalAppointment.series_id;
+        const finalTime = new Date(appointment_time);
+        
+        // --- LÓGICA DE RECORRÊNCIA (Idêntica à do Admin, mas com filtro de professional_id) ---
+
+        // CASO A: Era ÚNICO e virou RECORRENTE
+        if (!oldSeriesId && (frequency === 'Semanalmente' || frequency === 'Quinzenalmente')) {
+            // Cria nova série
+            const seriesResult = await conn.query(
+                'INSERT INTO appointment_series (professional_id, patient_id, start_date, frequency, session_value) VALUES (?, ?, ?, ?, ?)', 
+                [professionalId, patient_id, finalTime, frequency, session_value || originalAppointment.session_value]
+            );
+            const newSeriesId = seriesResult.insertId;
+            
+            // Atualiza o atual
+            await conn.query("UPDATE appointments SET series_id = ? WHERE id = ?", [newSeriesId, id]);
+
+            // Cria eventos futuros (Ex: próximos 3 meses)
+            const intervalDays = frequency === 'Semanalmente' ? 7 : 14;
+            let nextDate = new Date(finalTime);
+            const endDate = new Date();
+            endDate.setMonth(finalTime.getMonth() + 3);
+
+            while (nextDate <= endDate) {
+                nextDate.setDate(nextDate.getDate() + intervalDays);
+                if (nextDate > endDate) break;
+                
+                await conn.query(
+                    `INSERT INTO appointments (patient_id, professional_id, appointment_time, series_id, status, session_value, created_at) 
+                     VALUES (?, ?, ?, ?, 'Agendada', ?, NOW())`,
+                    [patient_id, professionalId, new Date(nextDate), newSeriesId, session_value || originalAppointment.session_value]
+                );
+            }
+        }
+
+        // CASO B: Era RECORRENTE e virou ÚNICO
+        else if (oldSeriesId && frequency === 'Evento Único') {
+            // Apaga futuros da série antiga
+            await conn.query(
+                "DELETE FROM appointments WHERE series_id = ? AND professional_id = ? AND appointment_time > ? AND status = 'Agendada'",
+                [oldSeriesId, professionalId, originalAppointment.appointment_time]
+            );
+            // Remove vínculo do atual
+            await conn.query(
+                "UPDATE appointments SET series_id = NULL WHERE id = ?", [id]
+            );
+            // Opcional: Remover a entrada em appointment_series se não houver mais itens, mas deixamos histórico.
+        }
+
+        // CASO C: Mudança de intervalo (ex: Semanal -> Quinzenal)
+        else if (oldSeriesId && frequency && frequency !== 'Evento Único' && frequency !== originalAppointment.frequency) {
+            // Verifica frequência antiga na tabela series se necessário, mas aqui assumimos que o user mandou a nova
+            
+            // Remove futuros antigos
+            await conn.query(
+                "DELETE FROM appointments WHERE series_id = ? AND professional_id = ? AND appointment_time > ? AND status = 'Agendada'",
+                [oldSeriesId, professionalId, originalAppointment.appointment_time]
+            );
+            
+            // Atualiza a série "pai"
+            await conn.query("UPDATE appointment_series SET frequency = ? WHERE id = ?", [frequency, oldSeriesId]);
+
+            // Recria futuros
+            const intervalDays = frequency === 'Semanalmente' ? 7 : 14;
+            let nextDate = new Date(finalTime);
+            const endDate = new Date();
+            endDate.setMonth(finalTime.getMonth() + 3);
+
+            while (nextDate <= endDate) {
+                nextDate.setDate(nextDate.getDate() + intervalDays);
+                if (nextDate > endDate) break;
+
+                await conn.query(
+                    `INSERT INTO appointments (patient_id, professional_id, appointment_time, series_id, status, session_value, created_at) 
+                     VALUES (?, ?, ?, ?, 'Agendada', ?, NOW())`,
+                    [patient_id, professionalId, new Date(nextDate), oldSeriesId, session_value || originalAppointment.session_value]
+                );
+            }
+        }
+
+        // --- ATUALIZAÇÃO DOS CAMPOS BÁSICOS DO EVENTO ATUAL ---
+        
+        // Se mudou o horário e ainda é uma série (e não mudou para único agora)
+        if (oldSeriesId && frequency !== 'Evento Único') {
+             const oldTime = new Date(originalAppointment.appointment_time);
+             const diffInMs = finalTime.getTime() - oldTime.getTime();
+             if (diffInMs !== 0) {
+                 const diffInSeconds = Math.round(diffInMs / 1000);
+                 await conn.query(
+                     `UPDATE appointments 
+                      SET appointment_time = DATE_ADD(appointment_time, INTERVAL ? SECOND)
+                      WHERE series_id = ? AND professional_id = ? AND id != ? AND appointment_time > ? AND status = 'Agendada'`,
+                     [diffInSeconds, oldSeriesId, professionalId, id, originalAppointment.appointment_time]
+                 );
+             }
+        }
+
+        // Atualiza o registro atual (garante que patient_id e session_value sejam atualizados)
+        await conn.query(
+            "UPDATE appointments SET patient_id = ?, appointment_time = ?, session_value = ? WHERE id = ?",
+            [patient_id, finalTime, session_value || null, id]
+        );
+
+        await conn.commit();
+        
+        // --- Notificações ---
+        try {
+            const [patientUser] = await conn.query("SELECT user_id, telefone, nome FROM patients p JOIN users u ON p.user_id = u.id WHERE p.id = ?", [patient_id]);
+            const [profData] = await conn.query("SELECT nome FROM professionals WHERE id = ?", [professionalId]);
+
+            if (patientUser && patientUser.user_id) {
+                const appointmentDate = finalTime.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+                await createNotification(
+                    req, patientUser.user_id, 'appointment_rescheduled',
+                    `Seu agendamento foi alterado para ${appointmentDate}. (Série ajustada se aplicável).`,
+                    '/paciente/agenda'
+                );
+                
+                if (patientUser.telefone) {
+                    await sendWhatsAppRescheduled(patientUser.telefone, patientUser.nome, profData.nome, finalTime);
+                }
+            }
+        } catch (e) { console.error("Erro notificação update:", e); }
+        
+        res.json({ message: 'Agendamento atualizado com sucesso!' });
+    } catch (error) {
+        if (conn) await conn.rollback();
+        console.error("Erro ao atualizar agendamento (Profissional):", error);
         res.status(500).json({ message: 'Erro interno ao atualizar o agendamento.' });
     } finally {
         if (conn) conn.release();
