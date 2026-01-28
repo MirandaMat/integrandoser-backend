@@ -28,17 +28,18 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
     try {
         conn = await pool.getConnection();
 
-        // ALTERAÇÃO: Adicionado LEFT JOIN com appointment_series e campo s.frequency
+        // ALTERAÇÃO: Adicionado COALESCE para buscar valor do paciente se o do agendamento for 0/NULL
         const appointments = await conn.query(`
-            SELECT a.id, a.id as original_id, a.series_id, a.status, a.session_value, 
+            SELECT a.id, a.id as original_id, a.series_id, a.status, 
+                COALESCE(NULLIF(a.session_value, 0), pat.session_price, 0) as session_value,
                 a.patient_id, a.professional_id, pat.company_id,
-                s.frequency, -- Campo Novo
+                s.frequency, 
                 CONCAT('Consulta: ', pat.nome, ' com ', prof.nome) as title,
                 a.appointment_time as start, 'consulta' as type
             FROM appointments a
             JOIN professionals prof ON a.professional_id = prof.id
             JOIN patients pat ON a.patient_id = pat.id
-            LEFT JOIN appointment_series s ON a.series_id = s.id -- Join Novo
+            LEFT JOIN appointment_series s ON a.series_id = s.id 
         `);
 
         const slots = await conn.query(`
@@ -75,15 +76,16 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
         const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
         if (!prof) return res.status(404).json({ message: 'Perfil não encontrado.' });
 
-        // ALTERAÇÃO: Adicionado LEFT JOIN com appointment_series e campo s.frequency
+        // ALTERAÇÃO: Adicionado COALESCE para buscar valor do paciente se o do agendamento for 0/NULL
         const appointments = await conn.query(`
-            SELECT a.id, a.id as original_id, a.series_id, a.status, a.session_value,
+            SELECT a.id, a.id as original_id, a.series_id, a.status, 
+                COALESCE(NULLIF(a.session_value, 0), p.session_price, 0) as session_value,
                 a.patient_id, a.professional_id,
-                s.frequency, -- Campo Novo
+                s.frequency, 
                 CONCAT('Consulta: ', p.nome) as title, a.appointment_time as start, 'consulta' as type
             FROM appointments a
             JOIN patients p ON a.patient_id = p.id
-            LEFT JOIN appointment_series s ON a.series_id = s.id -- Join Novo
+            LEFT JOIN appointment_series s ON a.series_id = s.id 
             WHERE a.professional_id = ?
         `, [prof.id]);
 
