@@ -49,6 +49,7 @@ router.post('/paciente', async (req, res) => {
     // Mapeamento flexível
     const nome_completo = b.nome_completo || b.nome || b.name || b.fullname;
     const email = b.email || b.e_mail;
+    const cpf = b.cpf;
     const telefone = b.telefone || b.celular || b.whatsapp;
     
     // Tratamento de data
@@ -83,8 +84,8 @@ router.post('/paciente', async (req, res) => {
     try {
         conn = await pool.getConnection();
         await conn.query(
-            "INSERT INTO triagem_pacientes (nome_completo, email, data_nascimento, genero, telefone, endereco, cidade, estado, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nome_completo, email, data_nascimento, genero, telefone, endereco, cidade, estado, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos]
+            "INSERT INTO triagem_pacientes (nome_completo, email, cpf, data_nascimento, genero, telefone, endereco, cidade, estado, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nome_completo, email, cpf, data_nascimento, genero, telefone, endereco, cidade, estado, terapia_buscada, modalidade, profissao, renda_familiar, preferencia_genero_profissional, feedback_questionario, concorda_termos]
         );
 
         await notifyAdmins(req, 'new_triage', `Nova triagem de paciente pendente: ${nome_completo}.`);
@@ -152,6 +153,8 @@ router.post('/profissional', async (req, res) => {
 
     const nome_completo = b.nome_completo || b.nome;
     const email = b.email;
+    const cpf = b.cpf;  
+    const cnpj = b.cnpj;
     const endereco = b.endereco;
     const cidade = b.cidade;
     const estado = b.estado ? b.estado.substring(0, 2).toUpperCase() : null;
@@ -178,8 +181,8 @@ router.post('/profissional', async (req, res) => {
     try {
         conn = await pool.getConnection();
         await conn.query(
-            "INSERT INTO triagem_profissionais (nome_completo, email, data_nascimento, endereco, cidade, estado, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nome_completo, email, data_nascimento, endereco, cidade, estado, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes]
+            "INSERT INTO triagem_profissionais (nome_completo, email, cpf, cnpj, data_nascimento, endereco, cidade, estado, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nome_completo, email, cpf, cnpj, data_nascimento, endereco, cidade, estado, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes]
         );
 
         await notifyAdmins(req, 'new_triage', `Nova triagem de profissional pendente: ${nome_completo}.`);
@@ -458,6 +461,7 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
             profileData = {
                 user_id: newUserId, 
                 nome: triagemData.nome_completo, 
+                cpf: triagemData.cpf,
                 genero: triagemData.genero,
                 data_nascimento: triagemData.data_nascimento, 
                 telefone: triagemData.telefone, 
@@ -475,6 +479,8 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
                 user_id: newUserId, 
                 nome: triagemData.nome_completo, 
                 email: triagemData.email, 
+                cpf: triagemData.cpf, 
+                cnpj: triagemData.cnpj,
                 data_nascimento: triagemData.data_nascimento, 
                 endereco: triagemData.endereco,
                 cidade: triagemData.cidade, 
