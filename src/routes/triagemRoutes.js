@@ -148,21 +148,31 @@ router.post('/empresa', async (req, res) => {
 });
 
 // Rota para receber submissão do formulário de PROFISSIONAL
+// Rota para receber submissão do formulário de PROFISSIONAL
 router.post('/profissional', async (req, res) => {
     const b = req.body;
 
+    // 1. Extração e Tratamento de Dados
     const nome_completo = b.nome_completo || b.nome;
     const email = b.email;
-    const cpf = b.cpf;  
+    const cpf = b.cpf;
     const cnpj = b.cnpj;
     const endereco = b.endereco;
     const cidade = b.cidade;
+    
+    // Trunca estado para 2 caracteres UF e coloca em maiúsculo
     const estado = b.estado ? b.estado.substring(0, 2).toUpperCase() : null;
+    
     const telefone = b.telefone || b.celular;
     
+    // Tratamento de data
     let data_nascimento = b.data_nascimento;
     if (!data_nascimento || data_nascimento === '') data_nascimento = null;
 
+    // --- CORREÇÃO: Definindo a variável que estava faltando ---
+    const nivel_profissional = b.nivel_profissional;
+
+    // Função auxiliar para converter "Sim"/"Não"/true/false em 1 ou 0
     const parseBoolean = (val) => {
         if (!val) return 0;
         if (typeof val === 'string') {
@@ -172,6 +182,7 @@ router.post('/profissional', async (req, res) => {
         return val ? 1 : 0;
     };
 
+    // Aplica a conversão nos campos booleanos
     const aluno_tavola = parseBoolean(b.aluno_tavola);
     const faz_supervisao = parseBoolean(b.faz_supervisao);
     const faz_analise_pessoal = parseBoolean(b.faz_analise_pessoal);
@@ -182,6 +193,7 @@ router.post('/profissional', async (req, res) => {
     const palavras_chave_abordagens = b.palavras_chave_abordagens || b.abordagem;
     const duvidas_sugestoes = b.duvidas_sugestoes;
 
+    // Validação Básica
     if (!nome_completo || !email) {
         return res.status(400).json({ message: "Nome e Email são obrigatórios." });
     }
@@ -189,9 +201,30 @@ router.post('/profissional', async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
+        
+        // Query de Inserção Completa
         await conn.query(
             "INSERT INTO triagem_profissionais (nome_completo, email, cpf, cnpj, data_nascimento, endereco, cidade, estado, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nome_completo, email, cpf, cnpj, data_nascimento, endereco, cidade, estado, telefone, nivel_profissional, aluno_tavola, modalidade, especialidade, instituicao_formacao, faz_supervisao, palavras_chave_abordagens, faz_analise_pessoal, duvidas_sugestoes]
+            [
+                nome_completo, 
+                email, 
+                cpf, 
+                cnpj, 
+                data_nascimento, 
+                endereco, 
+                cidade, 
+                estado, 
+                telefone, 
+                nivel_profissional, 
+                aluno_tavola, 
+                modalidade, 
+                especialidade, 
+                instituicao_formacao, 
+                faz_supervisao, 
+                palavras_chave_abordagens, 
+                faz_analise_pessoal, 
+                duvidas_sugestoes
+            ]
         );
 
         await notifyAdmins(req, 'new_triage', `Nova triagem de profissional pendente: ${nome_completo}.`);
@@ -204,7 +237,6 @@ router.post('/profissional', async (req, res) => {
         if (conn) conn.release();
     }
 });
-
 
 // GET /api/triagem/summary - Busca a contagem de pendentes para os cards
 router.get('/summary', protect, isAdmin, async (req, res) => {
