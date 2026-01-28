@@ -4,9 +4,20 @@ const pool = require('../config/db.js');
 const { protect, isAdmin, isProfissional } = require('../middleware/authMiddleware.js');
 const router = express.Router();
 
-// Função auxiliar (sem alterações)
+// Função auxiliar para garantir que pegamos as linhas corretamente 
+// (compatibilidade entre mysql2 padrão e mysql2/promise)
+const getRows = (result) => {
+    // Se o resultado for [rows, fields] (array onde o primeiro item é outro array), retornamos o primeiro item.
+    // Caso contrário, assumimos que o resultado já são as linhas.
+    if (Array.isArray(result) && Array.isArray(result[0])) {
+        return result[0];
+    }
+    return result;
+};
+
+// Função auxiliar para converter BigInt
 const serializeBigInts = (data) => {
-    if (data === null || data === undefined) return data;
+    if (data === null || data === undefined) return []; // Retorna array vazio se nulo para evitar erros no frontend
     const isArray = Array.isArray(data);
     const dataToProcess = isArray ? data : [data];
     return dataToProcess.map(item => {
@@ -17,7 +28,6 @@ const serializeBigInts = (data) => {
         return newItem;
     });
 };
-
 
 // Rota Calendário ADMIN
 router.get('/admin', protect, isAdmin, async (req, res) => {
@@ -45,8 +55,8 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
             JOIN professionals prof ON a.professional_id = prof.id
             JOIN patients pat ON a.patient_id = pat.id
         `;
-        // CORREÇÃO: Desestruturação para pegar apenas as linhas [rows]
-        const [appointments] = await conn.query(appointmentsQuery);
+        const appointmentsResult = await conn.query(appointmentsQuery);
+        const appointments = getRows(appointmentsResult);
 
         // 2. Agendamentos de triagem
         const screeningAppointmentsQuery = `
@@ -59,7 +69,8 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
             FROM triagem_appointments ta
             JOIN admin_availability aa ON ta.availability_id = aa.id
         `;
-        const [screeningAppointments] = await conn.query(screeningAppointmentsQuery);
+        const screeningResult = await conn.query(screeningAppointmentsQuery);
+        const screeningAppointments = getRows(screeningResult);
 
         // 3. Horários de triagem disponíveis
         const availableSlotsQuery = `
@@ -72,7 +83,8 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
             FROM admin_availability 
             WHERE is_booked = FALSE AND start_time > NOW()
         `;
-        const [availableSlots] = await conn.query(availableSlotsQuery);
+        const slotsResult = await conn.query(availableSlotsQuery);
+        const availableSlots = getRows(slotsResult);
 
         // 4. Compromissos Pessoais
         const personalAppsQuery = `
@@ -88,7 +100,8 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
             FROM personal_appointments
             WHERE user_id = ?
         `;
-        const [personalAppointments] = await conn.query(personalAppsQuery, [req.user.userId]);
+        const personalResult = await conn.query(personalAppsQuery, [req.user.userId]);
+        const personalAppointments = getRows(personalResult);
 
         res.json({
             appointments: serializeBigInts(appointments),
@@ -105,7 +118,6 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
     }
 });
 
-
 // Rota Calendário PROFISSIONAL
 router.get('/professional', protect, isProfissional, async (req, res) => {
     const { userId } = req.user;
@@ -113,13 +125,13 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
     try {
         conn = await pool.getConnection();
         
-        // CORREÇÃO: Busca do perfil profissional com desestruturação segura
-        const [profRows] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        const profResult = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        const profRows = getRows(profResult);
         
         if (!profRows || profRows.length === 0) {
             return res.status(404).json({ message: 'Perfil profissional não encontrado.' });
         }
-        const professionalId = profRows[0].id; // Acessa o primeiro item do array
+        const professionalId = profRows[0].id;
 
         // 2. Consultas 
         const queryAppointments = `
@@ -140,8 +152,8 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
             JOIN patients p ON a.patient_id = p.id
             WHERE a.professional_id = ?
         `;
-        // CORREÇÃO: Desestruturação [appointments]
-        const [appointments] = await conn.query(queryAppointments, [professionalId]);
+        const appointmentsResult = await conn.query(queryAppointments, [professionalId]);
+        const appointments = getRows(appointmentsResult);
 
         // 3. Compromissos Pessoais
         const queryPersonal = `
@@ -157,7 +169,8 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
             FROM personal_appointments
             WHERE user_id = ?
         `;
-        const [personalAppointments] = await conn.query(queryPersonal, [userId]);
+        const personalResult = await conn.query(queryPersonal, [userId]);
+        const personalAppointments = getRows(personalResult);
 
         // 4. Horários Livres (Disponibilidade para Reagendamento)
         const querySlots = `
@@ -171,7 +184,8 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
             FROM professional_availability
             WHERE professional_id = ? AND is_booked = FALSE
         `;
-        const [availableSlots] = await conn.query(querySlots, [professionalId]);
+        const slotsResult = await conn.query(querySlots, [professionalId]);
+        const availableSlots = getRows(slotsResult);
 
         res.json({
             appointments: serializeBigInts(appointments),
