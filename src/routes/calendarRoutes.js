@@ -19,6 +19,7 @@ const serializeBigInts = (data) => {
 };
 
 
+// Rota Calendário ADMIN
 router.get('/admin', protect, isAdmin, async (req, res) => {
     let conn;
     try {
@@ -44,7 +45,8 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
             JOIN professionals prof ON a.professional_id = prof.id
             JOIN patients pat ON a.patient_id = pat.id
         `;
-        const appointments = await conn.query(appointmentsQuery);
+        // CORREÇÃO: Desestruturação para pegar apenas as linhas [rows]
+        const [appointments] = await conn.query(appointmentsQuery);
 
         // 2. Agendamentos de triagem
         const screeningAppointmentsQuery = `
@@ -57,7 +59,7 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
             FROM triagem_appointments ta
             JOIN admin_availability aa ON ta.availability_id = aa.id
         `;
-        const screeningAppointments = await conn.query(screeningAppointmentsQuery);
+        const [screeningAppointments] = await conn.query(screeningAppointmentsQuery);
 
         // 3. Horários de triagem disponíveis
         const availableSlotsQuery = `
@@ -70,7 +72,7 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
             FROM admin_availability 
             WHERE is_booked = FALSE AND start_time > NOW()
         `;
-        const availableSlots = await conn.query(availableSlotsQuery);
+        const [availableSlots] = await conn.query(availableSlotsQuery);
 
         // 4. Compromissos Pessoais
         const personalAppsQuery = `
@@ -86,8 +88,7 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
             FROM personal_appointments
             WHERE user_id = ?
         `;
-
-        const personalAppointments = await conn.query(personalAppsQuery, [req.user.userId]);
+        const [personalAppointments] = await conn.query(personalAppsQuery, [req.user.userId]);
 
         res.json({
             appointments: serializeBigInts(appointments),
@@ -105,24 +106,26 @@ router.get('/admin', protect, isAdmin, async (req, res) => {
 });
 
 
+// Rota Calendário PROFISSIONAL
 router.get('/professional', protect, isProfissional, async (req, res) => {
     const { userId } = req.user;
     let conn;
     try {
         conn = await pool.getConnection();
         
-        const [profProfile] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        // CORREÇÃO: Busca do perfil profissional com desestruturação segura
+        const [profRows] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
         
-        if (!profProfile) {
+        if (!profRows || profRows.length === 0) {
             return res.status(404).json({ message: 'Perfil profissional não encontrado.' });
         }
-        const professionalId = profProfile.id;
+        const professionalId = profRows[0].id; // Acessa o primeiro item do array
 
         // 2. Consultas 
         const queryAppointments = `
             SELECT 
                 a.id, a.id as original_id,
-                a.series_id, -- <<< CAMPO ESSENCIAL PARA O MODAL DE EXCLUSÃO
+                a.series_id,
                 CONCAT('Consulta: ', p.nome) as title,
                 a.appointment_time as start,
                 a.appointment_time, 
@@ -137,7 +140,8 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
             JOIN patients p ON a.patient_id = p.id
             WHERE a.professional_id = ?
         `;
-        const appointments = await conn.query(queryAppointments, [professionalId]);
+        // CORREÇÃO: Desestruturação [appointments]
+        const [appointments] = await conn.query(queryAppointments, [professionalId]);
 
         // 3. Compromissos Pessoais
         const queryPersonal = `
@@ -153,7 +157,7 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
             FROM personal_appointments
             WHERE user_id = ?
         `;
-        const personalAppointments = await conn.query(queryPersonal, [userId]);
+        const [personalAppointments] = await conn.query(queryPersonal, [userId]);
 
         // 4. Horários Livres (Disponibilidade para Reagendamento)
         const querySlots = `
@@ -167,7 +171,7 @@ router.get('/professional', protect, isProfissional, async (req, res) => {
             FROM professional_availability
             WHERE professional_id = ? AND is_booked = FALSE
         `;
-        const availableSlots = await conn.query(querySlots, [professionalId]);
+        const [availableSlots] = await conn.query(querySlots, [professionalId]);
 
         res.json({
             appointments: serializeBigInts(appointments),
