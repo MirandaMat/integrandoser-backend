@@ -1326,7 +1326,7 @@ router.put('/professional/appointments/:id', protect, isProfissional, async (req
     const { patient_id, appointment_time, session_value } = req.body;
     const { userId } = req.user;
 
-    // Validação básica dos dados recebidos
+    // Verificação rigorosa dos campos obrigatórios
     if (!patient_id || !appointment_time) {
         return res.status(400).json({ message: 'Paciente e data/hora do agendamento são obrigatórios.' });
     }
@@ -1336,7 +1336,7 @@ router.put('/professional/appointments/:id', protect, isProfissional, async (req
         conn = await pool.getConnection();
         await conn.beginTransaction();
 
-        // 1. Obter o ID do perfil do profissional logado
+        // 1. Obtém o ID do profissional pelo token de usuário logado
         const [profProfile] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
         if (!profProfile) {
             await conn.rollback();
@@ -1344,10 +1344,9 @@ router.put('/professional/appointments/:id', protect, isProfissional, async (req
         }
         const professionalId = profProfile.id;
 
-        // 2. Buscar o agendamento original para pegar o series_id e a hora antiga
-        // Verifica também se o agendamento pertence a este profissional (segurança)
+        // 2. Verifica se o agendamento pertence a este profissional antes de editar
         const [originalApp] = await conn.query(
-            "SELECT * FROM appointments WHERE id = ? AND professional_id = ?", 
+            "SELECT series_id, appointment_time FROM appointments WHERE id = ? AND professional_id = ?", 
             [id, professionalId]
         );
 
@@ -1356,84 +1355,33 @@ router.put('/professional/appointments/:id', protect, isProfissional, async (req
             return res.status(404).json({ message: 'Agendamento não encontrado ou sem permissão.' });
         }
 
-        // Se o agendamento faz parte de uma série, atualiza os futuros
+        // 3. Se houver série recorrente, desloca os futuros proporcionalmente
         if (originalApp.series_id) {
             const oldTime = new Date(originalApp.appointment_time);
             const newTime = new Date(appointment_time);
-            
-            const diffInMs = newTime.getTime() - oldTime.getTime();
-            
-            if (diffInMs !== 0) {
-               const diffInSeconds = Math.round(diffInMs / 1000);
+            const diffInSeconds = Math.round((newTime.getTime() - oldTime.getTime()) / 1000);
 
+            if (diffInSeconds !== 0) {
                 await conn.query(
                     `UPDATE appointments 
                      SET appointment_time = DATE_ADD(appointment_time, INTERVAL ? SECOND)
-                     WHERE series_id = ? 
-                       AND professional_id = ? 
-                       AND id != ? 
-                       AND appointment_time > ? 
-                       AND status = 'Agendada'`,
+                     WHERE series_id = ? AND professional_id = ? AND id != ? AND appointment_time > ? AND status = 'Agendada'`,
                     [diffInSeconds, originalApp.series_id, professionalId, id, originalApp.appointment_time]
                 );
-                console.log(`[Profissional] Série atualizada. Deslocamento de ${diffInSeconds}s aplicado.`);
             }
         }
 
-        // 3. Query de atualização direta e robusta para o agendamento ATUAL
-        const query = `
-            UPDATE appointments SET 
-                patient_id = ?, 
-                appointment_time = ?, 
-                session_value = ? 
-            WHERE id = ? AND professional_id = ?
-        `;
-        
-        await conn.query(query, [
-            patient_id,
-            appointment_time,
-            session_value || null,
-            id,
-            professionalId
-        ]);
+        // 4. Atualiza o agendamento atual
+        await conn.query(
+            "UPDATE appointments SET patient_id = ?, appointment_time = ?, session_value = ? WHERE id = ? AND professional_id = ?",
+            [patient_id, appointment_time, session_value || null, id, professionalId]
+        );
 
         await conn.commit();
-        
-        // 4. Lógica de notificação para o paciente
-        try {
-            const [patientUser] = await conn.query("SELECT user_id FROM patients WHERE id = ?", [patient_id]);
-            if (patientUser && patientUser.user_id) {
-                const appointmentDate = new Date(appointment_time).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
-                await createNotification(
-                    req,
-                    patientUser.user_id,
-                    'appointment_rescheduled',
-                    `Seu agendamento foi alterado para ${appointmentDate} pelo seu profissional. (Eventos futuros da série também foram ajustados).`,
-                    '/paciente/agenda'
-                );
-
-                // Busca dados para o WhatsApp
-                const [fullPatientData] = await conn.query("SELECT u.telefone, p.nome FROM patients p JOIN users u ON p.user_id = u.id WHERE u.id = ?", [patientUser.user_id]);
-                const [profData] = await conn.query("SELECT nome FROM professionals WHERE id = ?", [professionalId]);
-
-                if (fullPatientData && fullPatientData.telefone) {
-                    await sendWhatsAppRescheduled(
-                        fullPatientData.telefone,
-                        fullPatientData.nome,
-                        profData.nome,
-                        new Date(appointment_time)
-                    );
-                }
-            }
-        } catch (notificationError) {
-            console.error("AVISO: Agendamento atualizado, mas a notificação falhou:", notificationError);
-        }
-        
         res.json({ message: 'Agendamento atualizado com sucesso!' });
     } catch (error) {
         if (conn) await conn.rollback();
-        console.error("Erro ao atualizar agendamento:", error);
-        res.status(500).json({ message: 'Erro interno ao atualizar o agendamento.' });
+        res.status(500).json({ message: 'Erro interno ao atualizar.' });
     } finally {
         if (conn) conn.release();
     }
