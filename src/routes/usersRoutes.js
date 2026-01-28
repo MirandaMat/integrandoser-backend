@@ -291,19 +291,63 @@ router.patch('/admin/transfer-patient', protect, isAdmin, async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
-        
-        // Verifica se o novo profissional existe
-        const [prof] = await conn.query("SELECT id FROM professionals WHERE id = ?", [newProfessionalId]);
-        if (!prof) return res.status(404).json({ message: 'Profissional não encontrado.' });
+        await conn.beginTransaction(); // Inicia a transação para segurança
 
-        // Atualiza APENAS o responsável atual (mantém appointments e created_by como histórico)
+        // 1. Verifica se o novo profissional existe
+        const [newProf] = await conn.query("SELECT id FROM professionals WHERE id = ?", [newProfessionalId]);
+        if (!newProf) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Profissional novo não encontrado.' });
+        }
+
+        // 2. Busca o profissional ANTIGO (Responsável atual) para saber de quem tirar a agenda
+        const [currentPatientData] = await conn.query(
+            "SELECT responsible_professional_id FROM patients WHERE id = ?",
+            [patientId]
+        );
+
+        if (!currentPatientData) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Paciente não encontrado.' });
+        }
+
+        const oldProfessionalId = currentPatientData.responsible_professional_id;
+
+        // 3. Atualiza o responsável na tabela de pacientes (Define o novo "Dono")
         await conn.query(
             "UPDATE patients SET responsible_professional_id = ? WHERE id = ?", 
             [newProfessionalId, patientId]
         );
 
-        res.json({ message: 'Paciente transferido com sucesso.' });
+        // 4. Migração da Agenda:
+        // Transfere os agendamentos FUTUROS do antigo para o novo.
+        // Ao fazer o UPDATE, o agendamento some da lista do antigo e aparece na do novo (equivalente a copiar e apagar).
+        let appointmentsMoved = 0;
+        
+        if (oldProfessionalId && oldProfessionalId != newProfessionalId) {
+            const [updateResult] = await conn.query(
+                `UPDATE appointments 
+                 SET professional_id = ? 
+                 WHERE patient_id = ? 
+                   AND professional_id = ? 
+                   AND status = 'Agendada' 
+                   AND appointment_time >= NOW()`, 
+                [newProfessionalId, patientId, oldProfessionalId]
+            );
+            appointmentsMoved = updateResult.affectedRows;
+        }
+
+        await conn.commit(); // Confirma todas as alterações
+
+        res.json({ 
+            message: 'Paciente transferido com sucesso.',
+            details: appointmentsMoved > 0 
+                ? `${appointmentsMoved} agendamentos futuros foram migrados para o novo profissional.` 
+                : 'Nenhum agendamento futuro precisou ser migrado.'
+        });
+
     } catch (error) {
+        if (conn) await conn.rollback(); // Desfaz tudo se der erro
         console.error("Erro ao transferir paciente:", error);
         res.status(500).json({ message: 'Erro ao transferir paciente.' });
     } finally {
