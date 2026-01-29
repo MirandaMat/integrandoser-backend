@@ -1005,20 +1005,19 @@ router.get('/future-appointments', protect, async (req, res) => {
 
 
 // Rota para o PROFISSIONAL atualizar o status de um agendamento (COM FATURAMENTO AUTOMÁTICO)
+// Rota para o PROFISSIONAL atualizar o status de um agendamento (COM FATURAMENTO AUTOMÁTICO)
 router.patch('/appointments/:id/status', protect, isProfissional, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
-    const { userId } = req.user; // ID do profissional logado
+    const { userId } = req.user;
 
-    // Validações
     const validStatuses = ['Agendada', 'Concluída', 'Cancelada'];
     if (!status || !validStatuses.includes(status)) {
         return res.status(400).json({ message: 'Status inválido.' });
     }
 
     let conn;
-    // Variáveis para guardar dados necessários para notificações/e-mails PÓS-commit e PÓS-resposta
-    let newInvoiceId = null;
+    let newInvoiceIdCreated = null; // Variável renomeada para evitar conflito com escopo
     let recipientUserId = null;
     let recipientName = '';
     let recipientEmail = '';
@@ -1026,121 +1025,87 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
     let grossValueForEmail = 0;
     let appointmentDetailsForEmail = null;
     let dueDateForEmail = null;
-    let creatorNameForEmail = 'seu profissional'; // Nome padrão
+    let creatorNameForEmail = 'seu profissional';
 
     try {
         conn = await pool.getConnection();
-        await conn.beginTransaction(); // Inicia a transação
+        await conn.beginTransaction();
 
-        // Verifica se o usuário logado é um profissional válido e obtém o nome
         const [profProfile] = await conn.query('SELECT id, nome FROM professionals WHERE user_id = ?', [userId]);
-        if (!profProfile || profProfile.length === 0) {
+        if (!profProfile) {
             await conn.rollback();
             return res.status(403).json({ message: 'Perfil profissional não encontrado.' });
         }
         const professionalId = profProfile.id;
-        creatorNameForEmail = profProfile.nome; // Guarda o nome para usar depois
+        creatorNameForEmail = profProfile.nome;
 
-        // Busca o agendamento, seu status atual e se pertence a um pacote
-        const [app] = await conn.query('SELECT professional_id, status as current_status, package_invoice_id FROM appointments WHERE id = ? FOR UPDATE', [id]); // FOR UPDATE para lock
+        const [app] = await conn.query('SELECT professional_id, status as current_status, package_invoice_id FROM appointments WHERE id = ? FOR UPDATE', [id]);
 
-        // Verifica permissão
-        if (!app || app.professional_id.toString() !== professionalId.toString()) {
+        if (!app || app.professional_id !== professionalId) {
             await conn.rollback();
             return res.status(403).json({ message: 'Você não tem permissão para alterar este agendamento.' });
         }
 
-        // Regra: Não pode mudar status (exceto Cancelar) se for de pacote pendente
         if (app.current_status === 'Aguardando Pagamento' && status !== 'Cancelada') {
             await conn.rollback();
             return res.status(403).json({ message: 'Esta consulta aguarda o pagamento do pacote. Você só pode cancelá-la.' });
         }
 
-        // --- PRINCIPAL DO STATUS ---
         await conn.query('UPDATE appointments SET status = ? WHERE id = ?', [status, id]);
 
-        // --- LÓGICA DE FATURAMENTO (se 'Concluída' e não for de pacote) ---
         if (status === 'Concluída' && !app.package_invoice_id) {
             const [appointmentDetails] = await conn.query(
                 "SELECT professional_id, patient_id, session_value, appointment_time FROM appointments WHERE id = ?",
                 [id]
             );
-            appointmentDetailsForEmail = appointmentDetails; // Guarda para usar depois do commit
+            appointmentDetailsForEmail = appointmentDetails;
 
             if (appointmentDetails && appointmentDetails.session_value > 0) {
                 grossValueForEmail = parseFloat(appointmentDetails.session_value);
                 
-                // =================================================================
-                // 1. LÓGICA DE COMISSÃO (ATUALIZADA PARA PROFISSIONAL ESCOLA)
-                // =================================================================
-                
                 const [profData] = await conn.query("SELECT id, level FROM professionals WHERE id = ?", [appointmentDetails.professional_id]);
                 const [patientData] = await conn.query("SELECT id, created_by_professional_id FROM patients WHERE id = ?", [appointmentDetails.patient_id]);
                 
-                let commissionRate = 0.25; // Default: Profissional Padrão (25%)
+                // --- LÓGICA DE COMISSÃO CORRIGIDA ---
+                let commissionRate = 0.25; 
 
                 if (profData && patientData) {
                     if (profData.level === 'Profissional Habilitado') {
-                        commissionRate = 0; // Paga apenas taxa fixa
+                        commissionRate = 0; 
                     } 
                     else if (profData.level === 'Profissional Escola') {
-                        // REGRA ESPECÍFICA DO PROFISSIONAL ESCOLA
-                        
-                        // A) Verifica se é Paciente Próprio (Privado)
                         if (patientData.created_by_professional_id === profData.id) {
-                            commissionRate = 0; // Regra 3: Nenhuma comissão para pacientes próprios
+                            commissionRate = 0; 
                         } else {
-                            // B) É Paciente Externo (Triagem)
-                            // Regra 1 e 2: Isento até 2 pacientes externos. Cobra 25% a partir do 3º.
-                            
-                            // Busca todos os pacientes EXTERNOS (não criados por ele) vinculados a este profissional
-                            // Ordenados por data de criação para estabelecer quem são os "primeiros"
-                            const [externalPatients] = await conn.query(`
-                                SELECT DISTINCT p.id
+                            // Regra: Isento para os 2 primeiros externos (triagem), 25% a partir do 3º.
+                            // Consideramos "externo" quem não foi criado por ele.
+                            const externalPatients = await conn.query(`
+                                SELECT DISTINCT p.id 
                                 FROM patients p
                                 LEFT JOIN professional_assignments pa ON p.id = pa.patient_id
-                                LEFT JOIN appointments a ON p.id = a.patient_id
-                                WHERE 
-                                    (pa.professional_id = ? OR a.professional_id = ?) -- Vinculado ao profissional
-                                    AND (p.created_by_professional_id IS NULL OR p.created_by_professional_id != ?) -- NÃO criado por ele
-                                ORDER BY p.created_at ASC
-                            `, [profData.id, profData.id, profData.id]);
+                                WHERE (pa.professional_id = ? OR p.created_by_professional_id IS NOT NULL)
+                                AND (p.created_by_professional_id IS NULL OR p.created_by_professional_id != ?)
+                                ORDER BY p.created_at ASC`, 
+                                [profData.id, profData.id]
+                            );
 
-                            // Encontra a posição deste paciente na lista de externos
                             const patientIndex = externalPatients.findIndex(p => p.id === patientData.id);
-                            
-                            if (patientIndex >= 0 && patientIndex < 2) {
-                                // É o 1º ou 2º paciente externo -> Isento
-                                commissionRate = 0;
-                            } else {
-                                // É o 3º ou mais -> Cobra 25%
-                                commissionRate = 0.25;
-                            }
+                            commissionRate = (patientIndex >= 0 && patientIndex < 2) ? 0 : 0.25;
                         }
                     }
                 }
 
                 const commissionValue = grossValueForEmail * commissionRate;
 
-                // Salva o registro de faturamento do profissional (Comissão)
                 await conn.query(
                     `INSERT IGNORE INTO professional_billings (professional_id, appointment_id, billing_date, gross_value, commission_value, status) VALUES (?, ?, ?, ?, ?, ?)`,
                     [appointmentDetails.professional_id, id, new Date(appointmentDetails.appointment_time), grossValueForEmail, commissionValue, 'unbilled']
                 );
 
-                // =================================================================
-                // 2. LÓGICA DE COBRANÇA (FATURA PARA O PAGADOR)
-                // =================================================================
-                
+                // --- LÓGICA DE COBRANÇA ---
                 const [patientDetails] = await conn.query("SELECT user_id, company_id, nome FROM patients WHERE id = ?", [appointmentDetails.patient_id]);
 
-                let recipientUserId = null;
-                let recipientName = null; // Variáveis opcionais se precisar para logs
-                let recipientEmail = null;
-                let recipientType = null;
-
                 if (patientDetails) {
-                    // Tenta cobrar da Empresa primeiro
                     if (patientDetails.company_id) {
                         const [companyDetails] = await conn.query(
                             "SELECT u.id as user_id, c.nome_empresa as name, u.email FROM companies c JOIN users u ON c.user_id = u.id WHERE c.id = ?",
@@ -1154,7 +1119,6 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
                         }
                     }
                     
-                    // Se não tiver empresa, cobra do Paciente
                     if (!recipientUserId) { 
                         const [userPatientDetails] = await conn.query(
                             "SELECT u.id as user_id, p.nome as name, u.email FROM patients p JOIN users u ON p.user_id = u.id WHERE p.id = ?",
@@ -1168,10 +1132,9 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
                         }
                     }
 
-                    // 3. Cria a fatura no sistema se encontrou um pagador válido
                     if (recipientUserId) {
                         const dueDate = new Date(); 
-                        dueDate.setDate(dueDate.getDate() + 15); // Vencimento em 15 dias
+                        dueDate.setDate(dueDate.getDate() + 15);
                         dueDateForEmail = dueDate; 
                         
                         const description = `Referente à sessão com ${patientDetails.nome} em ${new Date(appointmentDetails.appointment_time).toLocaleDateString('pt-BR')}.`;
@@ -1181,88 +1144,62 @@ router.patch('/appointments/:id/status', protect, isProfissional, async (req, re
                             [recipientUserId, userId, grossValueForEmail, dueDate, description, 'pending']
                         );
                         
-                        // Opcional: Pegar o ID da nova fatura
-                        const newInvoiceId = invoiceResult.insertId;
+                        newInvoiceIdCreated = invoiceResult.insertId; // Captura ID para uso pós-commit
                     }
                 }
             }
-        
-        } else if (!appointmentDetailsForEmail) { // Se não buscou detalhes no bloco 'Concluída'
-             // Busca detalhes básicos APENAS para notificação de status (se não for 'Concluída')
-             const [appointmentDetails] = await conn.query( "SELECT professional_id, patient_id, appointment_time FROM appointments WHERE id = ?", [id] );
+        } else if (!appointmentDetailsForEmail) {
+             const [appointmentDetails] = await conn.query("SELECT professional_id, patient_id, appointment_time FROM appointments WHERE id = ?", [id]);
              appointmentDetailsForEmail = appointmentDetails;
         }
 
-        // <<< COMMIT AQUI >>>
         await conn.commit();
 
-        // --- ENVIA A RESPOSTA DE SUCESSO IMEDIATAMENTE APÓS O COMMIT ---
-        res.json({ message: 'Status atualizado com sucesso!' + (newInvoiceId ? ' Fatura gerada.' : '') });
-        // O frontend receberá isso e fechará o modal / atualizará a lista.
+        res.json({ message: 'Status atualizado com sucesso!' + (newInvoiceIdCreated ? ' Fatura gerada.' : '') });
 
-        // --- TENTATIVA DE ENVIO DE NOTIFICAÇÕES E E-MAILS (APÓS A RESPOSTA) ---
-        // Usamos um novo try...catch apenas para logar erros, sem afetar a resposta já enviada.
+        // --- PÓS-COMMIT ---
         try {
-            // 1. Tenta enviar notificação e e-mail da FATURA (se foi criada nesta chamada)
-            if (newInvoiceId && recipientUserId) {
-                // Envia notificação via Socket.IO e salva no DB
+            if (newInvoiceIdCreated && recipientUserId) {
                 await createNotification(
                     req, recipientUserId, 'new_invoice',
                     `Nova cobrança de ${creatorNameForEmail} no valor de ${grossValueForEmail.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`,
-                    `/${recipientType}/financeiro` // Link dinâmico
+                    `/${recipientType}/financeiro`
                 );
 
-                // Tenta enviar e-mail
                 if (recipientEmail) {
                     await sendInvoiceNotificationEmail(
-                        recipientEmail, recipientName, creatorNameForEmail, grossValueForEmail, dueDateForEmail, newInvoiceId,
-                        `https://integrandoser.com.br/${recipientType}/financeiro` // Link dinâmico
+                        recipientEmail, recipientName, creatorNameForEmail, grossValueForEmail, dueDateForEmail, newInvoiceIdCreated,
+                        `https://integrandoser.com.br/${recipientType}/financeiro`
                     );
                 }
             }
 
-            // 2. Tenta enviar notificações de ATUALIZAÇÃO DE STATUS (Socket + DB)
             const io = req.app.get('io');
-            if (io) {
-                 io.emit('appointmentStatusChanged'); // Notifica todos os clientes conectados
-                 console.log(`[Socket Emit] Evento 'appointmentStatusChanged' emitido globalmente devido à atualização da consulta ${id}.`);
-            } else {
-                 console.warn(`AVISO [Consulta ${id}]: Instância do Socket.IO não encontrada. Não foi possível emitir 'appointmentStatusChanged'.`);
-            }
+            if (io) io.emit('appointmentStatusChanged');
 
-            // Notifica especificamente o paciente via DB (e Socket se online)
-            if (appointmentDetailsForEmail && appointmentDetailsForEmail.patient_id) { // Usa os detalhes guardados
-                // Busca o user_id do paciente FORA da transação (ela já foi commitada)
+            if (appointmentDetailsForEmail?.patient_id) {
                 const [patientUser] = await pool.query("SELECT user_id FROM patients WHERE id = ?", [appointmentDetailsForEmail.patient_id]);
-                if (patientUser && patientUser.user_id) {
+                if (patientUser?.user_id) {
                     const appointmentDate = new Date(appointmentDetailsForEmail.appointment_time).toLocaleDateString('pt-BR');
                     await createNotification(
-                        req, patientUser.user_id, 'appointment_rescheduled', // re-usando tipo
+                        req, patientUser.user_id, 'appointment_rescheduled',
                         `O status da sua consulta de ${appointmentDate} foi atualizado para: ${status}.`,
                         '/paciente/agenda'
                     );
                 }
             }
-        } catch (postCommitError) { // Captura qualquer erro ocorrido APÓS o commit e o envio da resposta
-            // Apenas loga o erro no servidor, pois a operação principal foi bem-sucedida.
-            console.error(`ERRO PÓS-COMMIT [Consulta ${id}]: Falha no envio de notificação/email após sucesso no DB:`, postCommitError);
+        } catch (postCommitError) {
+            console.error(`ERRO PÓS-COMMIT [Consulta ${id}]:`, postCommitError);
         }
 
-    } catch (error) { // Captura erros CRÍTICOS ocorridos ANTES do commit (DB, permissão)
-        if (conn) await conn.rollback(); // Garante rollback se o erro foi antes do commit
-        console.error(`Erro CRÍTICO ao atualizar status da consulta ${id} para ${status} (antes do commit):`, error);
-        // Garante que uma resposta de erro seja enviada APENAS se o commit falhar E a resposta ainda não foi enviada
-        if (!res.headersSent) {
-             res.status(500).json({ message: 'Erro crítico ao processar a solicitação no banco de dados.' });
-        } else {
-             // Loga um alerta se o erro ocorreu depois que a resposta já foi enviada (muito raro)
-             console.error(`[ALERTA] Erro DB detectado (antes do commit falhar?), mas a resposta de sucesso JÁ FOI ENVIADA para o cliente para a consulta ${id}.`);
-        }
+    } catch (error) {
+        if (conn) await conn.rollback();
+        console.error(`Erro CRÍTICO [Consulta ${id}]:`, error);
+        if (!res.headersSent) res.status(500).json({ message: 'Erro crítico ao processar no banco de dados.' });
     } finally {
-        if (conn) conn.release(); // Libera a conexão com o banco
+        if (conn) conn.release();
     }
 });
-
 
 
 // ========== Profissional Habilitado ============
