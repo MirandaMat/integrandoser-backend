@@ -34,23 +34,24 @@ router.get('/:patientId', protect, isProfissional, async (req, res) => {
         const { notes_consent, previous_professional_id } = link;
 
         // 2. Fetch Notes with Logic
-        // IF the note was created by another professional AND consent is NOT given -> Content is Hidden
+        // UPDATED: Added 'is_owner' field
         const notes = await conn.query(
             `SELECT 
                 n.id, 
                 n.created_at, 
                 n.professional_id,
                 p.nome as professional_name,
+                (n.professional_id = ?) as is_owner,  -- Retorna 1 se for dono, 0 se não
                 CASE 
                     WHEN n.professional_id = ? THEN n.note_content
-                    WHEN ? = 1 THEN n.note_content -- notes_consent is TRUE
+                    WHEN ? = 1 THEN n.note_content 
                     ELSE 'CONTEÚDO BLOQUEADO: Aguardando autorização do autor anterior.' 
                 END as note_content
              FROM session_notes n
              LEFT JOIN professionals p ON n.professional_id = p.id
              WHERE n.patient_id = ? 
              ORDER BY n.created_at DESC`,
-            [professionalId, notes_consent, patientId]
+            [professionalId, professionalId, notes_consent, patientId]
         );
 
         res.json(notes);
