@@ -545,15 +545,32 @@ router.get('/consent/pending-requests', protect, async (req, res) => {
             pending.notesRequests = Array.isArray(requests) && Array.isArray(requests[0]) ? requests[0] : requests;
         } 
         else if (role === 'PACIENTE') {
-            const [pat] = await conn.query(
-                `SELECT p.dreams_consent, p.transfer_date, prof.nome as new_prof_name
-                 FROM patients p
-                 JOIN professionals prof ON p.responsible_professional_id = prof.id
-                 WHERE p.user_id = ? AND p.transfer_date IS NOT NULL AND p.dreams_consent = 0`, 
-                [userId]
-            );
-            if (pat && pat.length > 0) {
-                pending.dreamRequest = pat[0];
+            // Lógica melhorada para garantir que pegamos o registro correto
+            const query = `
+                SELECT 
+                    p.dreams_consent, 
+                    p.transfer_date, 
+                    prof.nome as new_prof_name
+                FROM patients p
+                JOIN professionals prof ON p.responsible_professional_id = prof.id
+                WHERE p.user_id = ? 
+                  AND p.transfer_date IS NOT NULL 
+                  AND (p.dreams_consent = 0 OR p.dreams_consent IS NULL)
+            `;
+            const result = await conn.query(query, [userId]);
+            
+            // Tratamento robusto para retorno do mysql2
+            const rows = Array.isArray(result) && Array.isArray(result[0]) ? result[0] : result;
+            
+            if (rows && rows.length > 0) {
+                // Converte Buffer para número se necessário (para campos BIT)
+                const consent = Buffer.isBuffer(rows[0].dreams_consent) 
+                    ? rows[0].dreams_consent.readInt8() 
+                    : rows[0].dreams_consent;
+
+                if (consent === 0) {
+                    pending.dreamRequest = rows[0];
+                }
             }
         }
 
