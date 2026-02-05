@@ -201,26 +201,21 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
                 p.billing_type,      
                 p.billing_due_day,
                 p.session_price,
-                p.responsible_professional_id, 
+                p.responsible_professional_id,
+                p.created_by_professional_id, 
                 u.created_at, 
                 u.email,
                 u.status,
 
-                -- NOVA LÓGICA: Define se é o dono (pode editar/agendar) ou apenas visualizador (histórico)
-                -- Parâmetro 1
                 CASE 
                     WHEN p.responsible_professional_id = ? THEN 1 
                     ELSE 0 
                 END as is_owner,
 
-                -- Contagem de sessões (Apenas deste profissional)
-                -- Parâmetro 2
                 (SELECT COUNT(*) 
                 FROM appointments a 
                 WHERE a.patient_id = p.id AND a.professional_id = ? AND a.status = 'Concluída') as total_sessions,
 
-                -- Lógica de Valor Atual (Contrato ou Última Sessão)
-                -- Parâmetro 3
                 COALESCE(
                     NULLIF(p.session_price, 0),
                     (SELECT session_value 
@@ -229,8 +224,6 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
                     ORDER BY a.appointment_time DESC LIMIT 1), 
                 0) as current_value,
 
-                -- Data da Última Sessão
-                -- Parâmetro 4
                 (SELECT appointment_time 
                 FROM appointments a 
                 WHERE a.patient_id = p.id AND a.professional_id = ? 
@@ -240,24 +233,23 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
             JOIN users u ON p.user_id = u.id
             LEFT JOIN appointments a ON p.id = a.patient_id
             
-            -- FILTRO ATUALIZADO (A Lógica da Nova Funcionalidade):
-            -- Mostra o paciente se:
-            -- 1. O profissional logado é o RESPONSÁVEL ATUAL (p.responsible...)
-            -- 2. OU se o profissional logado tem HISTÓRICO (a.professional_id...)
-            -- Parâmetros 5 e 6
-            WHERE p.responsible_professional_id = ? OR a.professional_id = ?
+            -- CORREÇÃO AQUI: Adicionado 'OR p.created_by_professional_id = ?'
+            WHERE p.responsible_professional_id = ? 
+               OR p.created_by_professional_id = ? 
+               OR a.professional_id = ?
             
             ORDER BY p.nome ASC;
         `;
 
-        // Execução da query com os parâmetros na ordem correta
+        // É necessário passar o professionalId mais uma vez no array de parâmetros
         const patientsResult = await conn.query(patientsQuery, [
-            professionalId, // 1. Para o CASE is_owner
-            professionalId, // 2. Para total_sessions
-            professionalId, // 3. Para current_value
-            professionalId, // 4. Para last_session_date
-            professionalId, // 5. Para WHERE responsible_professional_id
-            professionalId  // 6. Para WHERE appointments.professional_id
+            professionalId, // 1. is_owner
+            professionalId, // 2. total_sessions
+            professionalId, // 3. current_value
+            professionalId, // 4. last_session_date
+            professionalId, // 5. responsible_professional_id
+            professionalId, // 6. created_by_professional_id (NOVO)
+            professionalId  // 7. appointments.professional_id
         ]);
         const patients = Array.isArray(patientsResult) && Array.isArray(patientsResult[0]) ? patientsResult[0] : patientsResult;
 
@@ -753,10 +745,14 @@ router.post('/', protect, isAdmin, upload.single('imagem_perfil'), async (req, r
                 throw new Error('Papel inválido');
         }
 
-        const values = fields.map(field => profileData[field] || null);
+        const values = fields.map(field => {
+            const val = profileData[field];
+            if (val === undefined || val === null || val === '') return null;
+            return val;
+        });
         const placeholders = fields.map(() => '?').join(',');
         await conn.query(`INSERT INTO ${tableName} (${fields.join(',')}) VALUES (${placeholders})`, values);
-
+        
         await conn.commit();
         
         await createNotification(req, newUserId, 'profile_update', 'Sua conta foi criada com sucesso! Configure seu perfil.');
@@ -912,22 +908,21 @@ router.post('/professional/create-patient', protect, isProfissional, async (req,
     try {
         conn = await pool.getConnection();
 
-        // 1. VERIFICAR PERMISSÃO DO PROFISSIONAL PELO SEU 'level'
+        // 1. VERIFICAR PERMISSÃO
         const [profProfile] = await conn.query("SELECT id, level FROM professionals WHERE user_id = ?", [professionalUserId]);
         
-        // Verifica se o nível está na lista de permitidos
         if (!profProfile || !['Profissional Habilitado', 'Profissional Escola'].includes(profProfile.level)) {
             return res.status(403).json({ message: 'Você não tem permissão para criar pacientes.' });
         }
         const professionalId = profProfile.id;
 
-        // 2. VERIFICAR SE O EMAIL DO PACIENTE JÁ EXISTE
+        // 2. VERIFICAR SE O EMAIL JÁ EXISTE
         const [existingUser] = await conn.query("SELECT id FROM users WHERE email = ?", [email]);
         if (existingUser) {
             return res.status(409).json({ message: 'Este email já está em uso por outro usuário.' });
         }
 
-        // 2.5 VERIFICAR SE O CPF JÁ EXISTE (SE FORNECIDO)
+        // 3. VERIFICAR SE O CPF JÁ EXISTE
         if (profileData.cpf) {
             const [existingCpf] = await conn.query("SELECT id FROM patients WHERE cpf = ?", [profileData.cpf]);
             if (existingCpf) {
@@ -937,42 +932,44 @@ router.post('/professional/create-patient', protect, isProfissional, async (req,
 
         await conn.beginTransaction();
 
-        // 3. CRIAR O NOVO USUÁRIO (PACIENTE)
+        // 4. CRIAR O USUÁRIO
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
-        const roleIdPaciente = 3; // ID Fixo para 'PACIENTE'
-        //const [userResult] = await conn.query(
+        const roleIdPaciente = 3; 
         const userResult = await conn.query(
             'INSERT INTO users (email, password, role_id) VALUES (?, ?, ?)',
             [email, hashedPassword, roleIdPaciente]
         );
-        //const newPatientUserId = userResult.insertId;
         const newPatientUserId = Array.isArray(userResult) ? userResult[0].insertId : userResult.insertId;
 
-        // 4. CRIAR O PERFIL DO PACIENTE
+        // 5. PREPARAR DADOS DO PERFIL - CORREÇÃO CRÍTICA AQUI
         profileData.user_id = newPatientUserId;
         profileData.created_by_professional_id = professionalId;
-        //const patientFields = ['user_id', 'nome', 'cpf', 'telefone', 'data_nascimento'];
-        const patientFields = ['user_id', 'nome', 'cpf', 'telefone', 'data_nascimento', 'created_by_professional_id'];
+        profileData.responsible_professional_id = professionalId; // <--- OBRIGATÓRIO PARA O PACIENTE APARECER
+
+        // Tratamento de Data de Nascimento para evitar erro de formato vazio
+        if (!profileData.data_nascimento) {
+            profileData.data_nascimento = null;
+        }
+
+        const patientFields = ['user_id', 'nome', 'cpf', 'telefone', 'data_nascimento', 'created_by_professional_id', 'responsible_professional_id'];
         const values = patientFields.map(field => profileData[field] || null);
         const placeholders = patientFields.map(() => '?').join(',');
-        //const [patientProfileResult] = await conn.query(
+
         const patientProfileResult = await conn.query(
             `INSERT INTO patients (${patientFields.join(',')}) VALUES (${placeholders})`,
             values
         );
-        //const newPatientProfileId = patientProfileResult.insertId;
         const newPatientProfileId = Array.isArray(patientProfileResult) ? patientProfileResult[0].insertId : patientProfileResult.insertId;
 
-        // 5. ASSOCIAR O NOVO PACIENTE AO PROFISSIONAL QUE O CRIOU
+        // 6. ASSOCIAR NA TABELA DE ASSIGNMENTS
         await conn.query(
             'INSERT INTO professional_assignments (professional_id, patient_id) VALUES (?, ?)',
             [professionalId, newPatientProfileId]
         );
 
         await conn.commit();
-
-        // Notificar o novo paciente que sua conta foi criada
+        
         await createNotification(req, newPatientUserId, 'profile_update', 'Bem-vindo(a)! Sua conta foi criada pelo seu profissional.');
 
         const responsePayload = { message: 'Paciente criado e associado com sucesso!', userId: newPatientUserId };
@@ -980,16 +977,15 @@ router.post('/professional/create-patient', protect, isProfissional, async (req,
         try{
             await sendWelcomeEmail(email, password);
         }catch(emailError){
-            console.error("### AVISO: O cadastro do paciente foi um sucesso, mas o envio de e-mail falhou. ###");
-            responsePayload.message = 'Paciente criado com sucesso, mas o e-mail de boas-vindas falhou ao ser enviado.';
-
+            console.error("### AVISO: Falha no envio de e-mail ###");
+            responsePayload.message = 'Paciente criado, mas erro ao enviar e-mail.';
         }
 
         res.status(201).json(serializeBigInts(responsePayload));
 
     } catch (error) {
         if (conn) await conn.rollback();
-        console.error("Erro ao criar paciente pelo profissional:", error);
+        console.error("Erro ao criar paciente:", error);
         res.status(500).json({ message: 'Erro interno no servidor ao criar paciente.' });
     } finally {
         if (conn) conn.release();
