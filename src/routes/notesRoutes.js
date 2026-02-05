@@ -4,6 +4,27 @@ const pool = require('../config/db.js');
 const { protect, isProfissional } = require('../middleware/authMiddleware.js');
 const router = express.Router();
 
+// --- FUNÇÃO AUXILIAR PARA CORRIGIR O ERRO DE BIGINT ---
+const serializeBigInts = (data) => {
+    if (typeof data === 'bigint') {
+        return data.toString();
+    }
+    if (data instanceof Date) {
+        return data;
+    }
+    if (Array.isArray(data)) {
+        return data.map(item => serializeBigInts(item));
+    }
+    if (data === null || typeof data !== 'object') {
+        return data;
+    }
+    const res = {};
+    for (const key in data) {
+        res[key] = serializeBigInts(data[key]);
+    }
+    return res;
+};
+
 // ROTA PARA BUSCAR TODAS AS NOTAS (COM REGRAS DE CONSENTIMENTO)
 router.get('/:patientId', protect, isProfissional, async (req, res) => {
     const { patientId } = req.params;
@@ -34,14 +55,14 @@ router.get('/:patientId', protect, isProfissional, async (req, res) => {
         const { notes_consent, previous_professional_id } = link;
 
         // 2. Fetch Notes with Logic
-        // UPDATED: Added 'is_owner' field
+        // IF the note was created by another professional AND consent is NOT given -> Content is Hidden
         const notes = await conn.query(
             `SELECT 
                 n.id, 
                 n.created_at, 
                 n.professional_id,
                 p.nome as professional_name,
-                (n.professional_id = ?) as is_owner,  -- Retorna 1 se for dono, 0 se não
+                (n.professional_id = ?) as is_owner,
                 CASE 
                     WHEN n.professional_id = ? THEN n.note_content
                     WHEN ? = 1 THEN n.note_content 
@@ -54,7 +75,9 @@ router.get('/:patientId', protect, isProfissional, async (req, res) => {
             [professionalId, professionalId, notes_consent, patientId]
         );
 
-        res.json(notes);
+        // AQUI ESTAVA O ERRO: Agora usamos serializeBigInts antes de enviar
+        res.json(serializeBigInts(notes));
+
     } catch (error) {
         console.error("Erro ao buscar notas:", error);
         res.status(500).json({ message: 'Erro ao buscar notas.' });
@@ -76,9 +99,6 @@ router.post('/', protect, isProfissional, async (req, res) => {
         }
         const professionalId = profProfile.id;
 
-        // Opcional: Você pode adicionar aqui a mesma verificação de vínculo do GET 
-        // para impedir que um profissional crie notas para um paciente que não é dele.
-
         const result = await conn.query(
             "INSERT INTO session_notes (professional_id, patient_id, note_content) VALUES (?, ?, ?)",
             [professionalId, patient_id, note_content]
@@ -87,7 +107,8 @@ router.post('/', protect, isProfissional, async (req, res) => {
         const insertId = Array.isArray(result) ? result[0].insertId : result.insertId;
         const [newNote] = await conn.query("SELECT * FROM session_notes WHERE id = ?", [insertId]);
 
-        res.status(201).json(newNote);
+        // Também serializamos aqui por garantia
+        res.status(201).json(serializeBigInts(newNote));
     } catch (error) {
         console.error("Erro ao criar nota:", error);
         res.status(500).json({ message: 'Erro ao criar nota.' });
@@ -96,7 +117,7 @@ router.post('/', protect, isProfissional, async (req, res) => {
     }
 });
 
-// ROTA PARA ATUALIZAR UMA NOTA (Mantém restrição de edição apenas para o dono da nota)
+// ROTA PARA ATUALIZAR UMA NOTA
 router.put('/:noteId', protect, isProfissional, async (req, res) => {
     const { noteId } = req.params;
     const { note_content } = req.body;
@@ -126,7 +147,7 @@ router.put('/:noteId', protect, isProfissional, async (req, res) => {
         await conn.query("UPDATE session_notes SET note_content = ? WHERE id = ?", [note_content, noteId]);
         const [updatedNote] = await conn.query("SELECT * FROM session_notes WHERE id = ?", [noteId]);
 
-        res.json(updatedNote);
+        res.json(serializeBigInts(updatedNote));
     } catch (error) {
         console.error("Erro ao atualizar nota:", error);
         res.status(500).json({ message: 'Erro ao atualizar nota.' });
@@ -135,7 +156,7 @@ router.put('/:noteId', protect, isProfissional, async (req, res) => {
     }
 });
 
-// ROTA PARA DELETAR UMA NOTA (Mantém restrição de deleção apenas para o dono da nota)
+// ROTA PARA DELETAR UMA NOTA
 router.delete('/:noteId', protect, isProfissional, async (req, res) => {
     const { noteId } = req.params;
     const { userId: professionalUserId } = req.user;
