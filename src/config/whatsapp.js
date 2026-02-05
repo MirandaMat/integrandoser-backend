@@ -15,7 +15,7 @@ const formatPhoneNumber = (phone) => {
     return cleanPhone;
 };
 
-// Helper: Envio genérico
+// Helper
 const sendTemplateMessage = async (to, templateName, components) => {
     if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) {
         console.warn("[WhatsApp] Variáveis de ambiente ausentes.");

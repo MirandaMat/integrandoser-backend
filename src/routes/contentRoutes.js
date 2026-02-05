@@ -522,8 +522,8 @@ router.get('/site', async (req, res) => {
     }
 });
 
+
 // PUT /api/content/site - Atualiza o conteúdo geral do site
-// PUT /api/content/site - Atualiza o conteúdo geral do site (VERSÃO CORRIGIDA)
 router.put('/site', protect, isAdmin, upload.fields([
     { name: 'hero_video', maxCount: 1 },
     { name: 'about_logo', maxCount: 1 },
@@ -536,7 +536,7 @@ router.put('/site', protect, isAdmin, upload.fields([
     console.log('[PUT /site] req.body:', JSON.stringify(req.body, null, 2));
     console.log('[PUT /site] req.files:', JSON.stringify(req.files, null, 2));
 
-    const sectionsToUpdate = ['home', 'about', 'founder', 'footer'];
+    const sectionsToUpdate = ['home', 'about', 'founder', 'footer', 'policies'];
     const updatedSectionKey = sectionsToUpdate.find(key => req.body[key]);
 
     console.log(`[PUT /site] Detected section key to update: ${updatedSectionKey}`);
