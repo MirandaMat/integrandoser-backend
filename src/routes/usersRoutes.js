@@ -360,6 +360,8 @@ router.patch('/admin/transfer-patient', protect, isAdmin, async (req, res) => {
     }
 });
 */
+
+
 // PATCH /api/users/admin/transfer-patient
 router.patch('/admin/transfer-patient', protect, isAdmin, async (req, res) => {
     const { patientId, newProfessionalId } = req.body;
@@ -470,6 +472,101 @@ router.patch('/admin/transfer-patient', protect, isAdmin, async (req, res) => {
         if (conn) conn.release();
     }
 });
+
+
+
+// --- NEW ROUTES FOR CONSENT ---
+
+// POST /api/users/consent/notes (For Old Professional)
+router.post('/consent/notes', protect, isProfissional, async (req, res) => {
+    const { patientId, grant } = req.body; // grant = true/false
+    const { userId } = req.user;
+    
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        // Verify if user is the PREVIOUS professional
+        const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        
+        const [patient] = await conn.query(
+            "SELECT id FROM patients WHERE id = ? AND previous_professional_id = ?", 
+            [patientId, prof.id]
+        );
+
+        if (!patient) return res.status(403).json({ message: "Não autorizado." });
+
+        await conn.query("UPDATE patients SET notes_consent = ? WHERE id = ?", [grant ? 1 : 0, patientId]);
+        res.json({ message: "Permissão de notas atualizada." });
+    } catch (e) {
+        res.status(500).json({ message: "Erro ao atualizar permissão." });
+    } finally {
+        if(conn) conn.release();
+    }
+});
+
+// POST /api/users/consent/dreams (For Patient)
+router.post('/consent/dreams', protect, isPaciente, async (req, res) => {
+    const { grant } = req.body;
+    const { userId } = req.user;
+
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        await conn.query(
+            "UPDATE patients SET dreams_consent = ? WHERE user_id = ?", 
+            [grant ? 1 : 0, userId]
+        );
+        res.json({ message: "Permissão de diário atualizada." });
+    } catch (e) {
+        res.status(500).json({ message: "Erro ao atualizar permissão." });
+    } finally {
+        if(conn) conn.release();
+    }
+});
+
+// GET /api/users/consent/pending-requests (For Dashboard checks)
+router.get('/consent/pending-requests', protect, async (req, res) => {
+    const { userId, role } = req.user;
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        
+        let pending = {};
+
+        if (role === 'PROFISSIONAL') {
+            const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+            // Find patients transferred away from this prof who haven't given consent yet
+            const requests = await conn.query(
+                `SELECT p.id, p.nome 
+                 FROM patients p 
+                 WHERE p.previous_professional_id = ? AND p.notes_consent = 0`, 
+                [prof.id]
+            );
+            pending.notesRequests = Array.isArray(requests) && Array.isArray(requests[0]) ? requests[0] : requests;
+        } 
+        else if (role === 'PACIENTE') {
+            const [pat] = await conn.query(
+                `SELECT p.dreams_consent, p.transfer_date, prof.nome as new_prof_name
+                 FROM patients p
+                 JOIN professionals prof ON p.responsible_professional_id = prof.id
+                 WHERE p.user_id = ? AND p.transfer_date IS NOT NULL AND p.dreams_consent = 0`, 
+                [userId]
+            );
+            if (pat && pat.length > 0) {
+                pending.dreamRequest = pat[0];
+            }
+        }
+
+        res.json(serializeBigInts(pending));
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ message: "Erro ao buscar pendências." });
+    } finally {
+        if(conn) conn.release();
+    }
+});
+
+
 
 // GET /api/users/:id - Busca um usuário específico com perfil
 router.get('/:id', protect, async (req, res) => {
@@ -1690,98 +1787,6 @@ router.get('/:userId/linked-patients', protect, isAdmin, async (req, res) => {
         res.status(500).json({ message: 'Erro ao buscar pacientes vinculados.' });
     } finally {
         if (conn) conn.release();
-    }
-});
-
-
-// --- NEW ROUTES FOR CONSENT ---
-
-// POST /api/users/consent/notes (For Old Professional)
-router.post('/consent/notes', protect, isProfissional, async (req, res) => {
-    const { patientId, grant } = req.body; // grant = true/false
-    const { userId } = req.user;
-    
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        // Verify if user is the PREVIOUS professional
-        const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
-        
-        const [patient] = await conn.query(
-            "SELECT id FROM patients WHERE id = ? AND previous_professional_id = ?", 
-            [patientId, prof.id]
-        );
-
-        if (!patient) return res.status(403).json({ message: "Não autorizado." });
-
-        await conn.query("UPDATE patients SET notes_consent = ? WHERE id = ?", [grant ? 1 : 0, patientId]);
-        res.json({ message: "Permissão de notas atualizada." });
-    } catch (e) {
-        res.status(500).json({ message: "Erro ao atualizar permissão." });
-    } finally {
-        if(conn) conn.release();
-    }
-});
-
-// POST /api/users/consent/dreams (For Patient)
-router.post('/consent/dreams', protect, isPaciente, async (req, res) => {
-    const { grant } = req.body;
-    const { userId } = req.user;
-
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        await conn.query(
-            "UPDATE patients SET dreams_consent = ? WHERE user_id = ?", 
-            [grant ? 1 : 0, userId]
-        );
-        res.json({ message: "Permissão de diário atualizada." });
-    } catch (e) {
-        res.status(500).json({ message: "Erro ao atualizar permissão." });
-    } finally {
-        if(conn) conn.release();
-    }
-});
-
-// GET /api/users/consent/pending-requests (For Dashboard checks)
-router.get('/consent/pending-requests', protect, async (req, res) => {
-    const { userId, role } = req.user;
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        
-        let pending = {};
-
-        if (role === 'PROFISSIONAL') {
-            const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
-            // Find patients transferred away from this prof who haven't given consent yet
-            const requests = await conn.query(
-                `SELECT p.id, p.nome 
-                 FROM patients p 
-                 WHERE p.previous_professional_id = ? AND p.notes_consent = 0`, 
-                [prof.id]
-            );
-            pending.notesRequests = Array.isArray(requests) && Array.isArray(requests[0]) ? requests[0] : requests;
-        } 
-        else if (role === 'PACIENTE') {
-            const [pat] = await conn.query(
-                `SELECT p.dreams_consent, p.transfer_date, prof.nome as new_prof_name
-                 FROM patients p
-                 JOIN professionals prof ON p.responsible_professional_id = prof.id
-                 WHERE p.user_id = ? AND p.transfer_date IS NOT NULL AND p.dreams_consent = 0`, 
-                [userId]
-            );
-            if (pat && pat.length > 0) {
-                pending.dreamRequest = pat[0];
-            }
-        }
-
-        res.json(serializeBigInts(pending));
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ message: "Erro ao buscar pendências." });
-    } finally {
-        if(conn) conn.release();
     }
 });
 
