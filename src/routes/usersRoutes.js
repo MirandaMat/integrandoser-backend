@@ -281,6 +281,7 @@ router.get('/my-associates', [protect, isProfissional], async (req, res) => {
 
 
 // PATCH /api/users/admin/transfer-patient
+/*
 router.patch('/admin/transfer-patient', protect, isAdmin, async (req, res) => {
     const { patientId, newProfessionalId } = req.body;
 
@@ -358,54 +359,119 @@ router.patch('/admin/transfer-patient', protect, isAdmin, async (req, res) => {
         if (conn) conn.release();
     }
 });
+*/
+// PATCH /api/users/admin/transfer-patient
+router.patch('/admin/transfer-patient', protect, isAdmin, async (req, res) => {
+    const { patientId, newProfessionalId } = req.body;
 
-// GET /api/users/:id - Busca um usuário específico com perfil
-/* 
-router.get('/:id', protect, async (req, res) => {
-    const { id } = req.params;
+    if (!patientId || !newProfessionalId) {
+        return res.status(400).json({ message: 'IDs do paciente e do novo profissional são obrigatórios.' });
+    }
+
     let conn;
     try {
         conn = await pool.getConnection();
+        await conn.beginTransaction(); // Inicia a transação
 
-        const users = await conn.query('SELECT id, email, role_id, status FROM users WHERE id = ?', [id]);
-        if (!users || users.length === 0) {
-            return res.status(404).json({ message: 'Usuário não encontrado.' });
-        }
-        const user = users[0];
-        
-        const roles = await conn.query('SELECT name FROM roles WHERE id = ?', [user.role_id]);
-        if (!roles || roles.length === 0) {
-            return res.status(404).json({ message: 'Papel do usuário não encontrado.' });
-        }
-        const role = roles[0];
-        
-        let tableName;
-        switch (role.name) {
-            case 'ADM': tableName = 'administrators'; break;
-            case 'PROFISSIONAL': tableName = 'professionals'; break;
-            case 'PACIENTE': tableName = 'patients'; break;
-            case 'EMPRESA': tableName = 'companies'; break;
-            default: return res.status(400).json({ message: 'Papel inválido.' });
+        // 1. Verifica se o novo profissional existe e busca o nome (para notificação)
+        const [newProf] = await conn.query("SELECT id, nome FROM professionals WHERE id = ?", [newProfessionalId]);
+        if (!newProf) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Profissional novo não encontrado.' });
         }
 
-        const profiles = await conn.query(`SELECT * FROM ${tableName} WHERE user_id = ?`, [id]);
-        const profile = profiles.length > 0 ? profiles[0] : {};
+        // 2. Busca dados do paciente: profissional atual (ANTIGO) e user_id (para notificação)
+        const [currentPatientData] = await conn.query(
+            "SELECT responsible_professional_id, user_id FROM patients WHERE id = ?",
+            [patientId]
+        );
+
+        if (!currentPatientData) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'Paciente não encontrado.' });
+        }
+
+        const oldProfessionalId = currentPatientData.responsible_professional_id;
+
+        // 3. Atualiza a tabela de pacientes:
+        // - Define o novo responsável
+        // - Salva o ID do anterior em 'previous_professional_id'
+        // - Salva a data da transferência
+        // - RESETA os consentimentos (notes_consent e dreams_consent) para 0 (bloqueado)
+        await conn.query(
+            `UPDATE patients SET 
+                responsible_professional_id = ?, 
+                previous_professional_id = ?,
+                transfer_date = NOW(),
+                notes_consent = 0, 
+                dreams_consent = 0
+             WHERE id = ?`, 
+            [newProfessionalId, oldProfessionalId, patientId]
+        );
+
+        // 4. Envia Notificações de Solicitação de Consentimento
+
+        // A) Para o Profissional ANTIGO (solicitando liberação das anotações/anamnese)
+        if (oldProfessionalId) {
+            const [oldProfUser] = await conn.query("SELECT user_id FROM professionals WHERE id = ?", [oldProfessionalId]);
+            if (oldProfUser) {
+                await createNotification(
+                    req, 
+                    oldProfUser.user_id, 
+                    'consent_request', 
+                    'Um paciente seu foi transferido. Por favor, autorize o compartilhamento de prontuário com o novo responsável.', 
+                    '/professional/dashboard'
+                );
+            }
+        }
+
+        // B) Para o Paciente (solicitando liberação do histórico de sonhos antigo)
+        await createNotification(
+            req, 
+            currentPatientData.user_id, 
+            'consent_request', 
+            `Seu profissional responsável mudou para ${newProf.nome}. Autorize o acesso ao seu histórico de sonhos anterior à troca.`, 
+            '/paciente/dashboard'
+        );
+
+        // 5. Migração da Agenda (Move agendamentos futuros 'Agendada' para o novo profissional)
+        let appointmentsMoved = 0;
         
-        const fullUser = {
-            ...serializeBigInts(user),
-            role: role.name,
-            profile: serializeBigInts(profile) || {}
-        };
-        res.json(fullUser);
+        if (oldProfessionalId && oldProfessionalId != newProfessionalId) {
+            const queryResult = await conn.query(
+                `UPDATE appointments 
+                 SET professional_id = ? 
+                 WHERE patient_id = ? 
+                   AND professional_id = ? 
+                   AND status = 'Agendada' 
+                   AND appointment_time >= NOW()`, 
+                [newProfessionalId, patientId, oldProfessionalId]
+            );
+
+            // Verifica se o resultado é um array (padrão mysql2/promise) ou objeto direto
+            const updateResult = Array.isArray(queryResult) ? queryResult[0] : queryResult;
+            appointmentsMoved = updateResult.affectedRows;
+        }
+
+        await conn.commit(); // Confirma todas as alterações
+
+        res.json({ 
+            message: 'Paciente transferido com sucesso. Solicitações de consentimento enviadas.',
+            details: appointmentsMoved > 0 
+                ? `${appointmentsMoved} agendamentos futuros foram migrados para o novo profissional.` 
+                : 'Sem agendamentos futuros migrados.'
+        });
+
     } catch (error) {
-        console.error("Erro ao buscar perfil do usuário:", error);
-        res.status(500).json({ message: 'Erro no servidor.' });
+        if (conn) await conn.rollback(); // Desfaz tudo se der erro
+        console.error("Erro ao transferir paciente:", error);
+        res.status(500).json({ message: 'Erro ao transferir paciente.' });
     } finally {
         if (conn) conn.release();
     }
 });
 
-*/
+// GET /api/users/:id - Busca um usuário específico com perfil
 router.get('/:id', protect, async (req, res) => {
     const { id } = req.params;
     let conn;
@@ -1624,6 +1690,98 @@ router.get('/:userId/linked-patients', protect, isAdmin, async (req, res) => {
         res.status(500).json({ message: 'Erro ao buscar pacientes vinculados.' });
     } finally {
         if (conn) conn.release();
+    }
+});
+
+
+// --- NEW ROUTES FOR CONSENT ---
+
+// POST /api/users/consent/notes (For Old Professional)
+router.post('/consent/notes', protect, isProfissional, async (req, res) => {
+    const { patientId, grant } = req.body; // grant = true/false
+    const { userId } = req.user;
+    
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        // Verify if user is the PREVIOUS professional
+        const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+        
+        const [patient] = await conn.query(
+            "SELECT id FROM patients WHERE id = ? AND previous_professional_id = ?", 
+            [patientId, prof.id]
+        );
+
+        if (!patient) return res.status(403).json({ message: "Não autorizado." });
+
+        await conn.query("UPDATE patients SET notes_consent = ? WHERE id = ?", [grant ? 1 : 0, patientId]);
+        res.json({ message: "Permissão de notas atualizada." });
+    } catch (e) {
+        res.status(500).json({ message: "Erro ao atualizar permissão." });
+    } finally {
+        if(conn) conn.release();
+    }
+});
+
+// POST /api/users/consent/dreams (For Patient)
+router.post('/consent/dreams', protect, isPaciente, async (req, res) => {
+    const { grant } = req.body;
+    const { userId } = req.user;
+
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        await conn.query(
+            "UPDATE patients SET dreams_consent = ? WHERE user_id = ?", 
+            [grant ? 1 : 0, userId]
+        );
+        res.json({ message: "Permissão de diário atualizada." });
+    } catch (e) {
+        res.status(500).json({ message: "Erro ao atualizar permissão." });
+    } finally {
+        if(conn) conn.release();
+    }
+});
+
+// GET /api/users/consent/pending-requests (For Dashboard checks)
+router.get('/consent/pending-requests', protect, async (req, res) => {
+    const { userId, role } = req.user;
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        
+        let pending = {};
+
+        if (role === 'PROFISSIONAL') {
+            const [prof] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [userId]);
+            // Find patients transferred away from this prof who haven't given consent yet
+            const requests = await conn.query(
+                `SELECT p.id, p.nome 
+                 FROM patients p 
+                 WHERE p.previous_professional_id = ? AND p.notes_consent = 0`, 
+                [prof.id]
+            );
+            pending.notesRequests = Array.isArray(requests) && Array.isArray(requests[0]) ? requests[0] : requests;
+        } 
+        else if (role === 'PACIENTE') {
+            const [pat] = await conn.query(
+                `SELECT p.dreams_consent, p.transfer_date, prof.nome as new_prof_name
+                 FROM patients p
+                 JOIN professionals prof ON p.responsible_professional_id = prof.id
+                 WHERE p.user_id = ? AND p.transfer_date IS NOT NULL AND p.dreams_consent = 0`, 
+                [userId]
+            );
+            if (pat && pat.length > 0) {
+                pending.dreamRequest = pat[0];
+            }
+        }
+
+        res.json(serializeBigInts(pending));
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ message: "Erro ao buscar pendências." });
+    } finally {
+        if(conn) conn.release();
     }
 });
 

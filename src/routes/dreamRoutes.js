@@ -102,64 +102,6 @@ router.delete('/:entryId', protect, isPaciente, async (req, res) => {
     }
 });
 
-// ROTA DO PROFISSIONAL para ver os sonhos de um paciente específico
-/*
-router.get('/professional/:patientId', protect, isProfissional, async (req, res) => {
-    const { patientId } = req.params;
-    // Adicionar lógica de verificação se o profissional pode ver este paciente
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        const dreams = await conn.query("SELECT * FROM dream_diary_entries WHERE patient_id = ? ORDER BY created_at DESC", [patientId]);
-        res.json(dreams);
-    } catch(err) {
-        res.status(500).json({message: 'Erro ao buscar diário do paciente.'})
-    } finally {
-        if (conn) conn.release();
-    }
-});
-
-
-// ROTA DO PROFISSIONAL para ver os sonhos de um paciente específico (VERSÃO SEGURA)
-router.get('/professional/:patientId', protect, isProfissional, async (req, res) => {
-    const { patientId } = req.params;
-    const { userId: professionalUserId } = req.user;
-    let conn;
-    try {
-        conn = await pool.getConnection();
-
-        // 1. Pega o ID de perfil do profissional logado
-        const [profProfile] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [professionalUserId]);
-        if (!profProfile) {
-            return res.status(403).json({ message: "Perfil de profissional não encontrado." });
-        }
-        const professionalId = profProfile.id;
-
-        // 2. Verifica se existe um vínculo entre o profissional e o paciente
-        const [link] = await conn.query(
-            `SELECT p.id FROM patients p
-             LEFT JOIN appointments a ON a.patient_id = p.id
-             WHERE p.id = ? AND (p.created_by_professional_id = ? OR a.professional_id = ?)
-             LIMIT 1`,
-            [patientId, professionalId, professionalId]
-        );
-
-        if (!link) {
-            return res.status(403).json({ message: "Acesso não autorizado a este diário." });
-        }
-
-        // 3. Se o vínculo existe, busca os sonhos
-        const dreams = await conn.query("SELECT * FROM dream_diary_entries WHERE patient_id = ? ORDER BY created_at DESC", [patientId]);
-        res.json(dreams);
-    } catch(err) {
-        console.error("Erro ao buscar diário para o profissional:", err);
-        res.status(500).json({message: 'Erro ao buscar diário do paciente.'})
-    } finally {
-        if (conn) conn.release();
-    }
-});
-*/
-
 
 // ROTA DO PROFISSIONAL para ver os sonhos de um paciente específico (VERSÃO SEGURA ATUALIZADA)
 router.get('/professional/:patientId', protect, isProfissional, async (req, res) => {
@@ -169,37 +111,49 @@ router.get('/professional/:patientId', protect, isProfissional, async (req, res)
     try {
         conn = await pool.getConnection();
 
-        // 1. Pega o ID de perfil do profissional logado
+        // Pega o ID de perfil do profissional logado
         const [profProfile] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [professionalUserId]);
         if (!profProfile) {
             return res.status(403).json({ message: "Perfil de profissional não encontrado." });
         }
         const professionalId = profProfile.id;
 
-        // 2. Verifica se existe um vínculo entre o profissional e o paciente
-        // ATUALIZAÇÃO: Adicionado 'OR p.responsible_professional_id = ?'
-        const [link] = await conn.query(
-            `SELECT p.id FROM patients p
+        // 1. Get Patient Data & Permissions
+        const [patientData] = await conn.query(
+            `SELECT 
+                p.id, 
+                p.transfer_date, 
+                p.dreams_consent,
+                p.responsible_professional_id
+             FROM patients p
              LEFT JOIN appointments a ON a.patient_id = p.id
              WHERE p.id = ? AND (
                 p.created_by_professional_id = ? 
                 OR p.responsible_professional_id = ? 
                 OR a.professional_id = ?
-             )
-             LIMIT 1`,
+             ) LIMIT 1`,
             [patientId, professionalId, professionalId, professionalId]
         );
 
-        if (!link) {
-            return res.status(403).json({ message: "Acesso não autorizado a este diário." });
-        }
+        if (!patientData) return res.status(403).json({ message: "Acesso não autorizado." });
 
-        // 3. Se o vínculo existe, busca os sonhos
-        const dreams = await conn.query("SELECT * FROM dream_diary_entries WHERE patient_id = ? ORDER BY created_at DESC", [patientId]);
+        // 2. Build Query
+        // If transfer occurred AND consent is false, hide dreams created BEFORE transfer
+        let query = "SELECT * FROM dream_diary_entries WHERE patient_id = ?";
+        const params = [patientId];
+
+        if (patientData.transfer_date && !patientData.dreams_consent) {
+            query += " AND created_at >= ?";
+            params.push(patientData.transfer_date);
+        }
+        
+        query += " ORDER BY created_at DESC";
+
+        const dreams = await conn.query(query, params);
         res.json(dreams);
     } catch(err) {
-        console.error("Erro ao buscar diário para o profissional:", err);
-        res.status(500).json({message: 'Erro ao buscar diário do paciente.'})
+        console.error(err);
+        res.status(500).json({message: 'Erro ao buscar diário.'})
     } finally {
         if (conn) conn.release();
     }

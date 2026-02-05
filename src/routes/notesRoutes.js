@@ -4,8 +4,7 @@ const pool = require('../config/db.js');
 const { protect, isProfissional } = require('../middleware/authMiddleware.js');
 const router = express.Router();
 
-// ROTA PARA BUSCAR TODAS AS NOTAS DE UM PACIENTE ESPECÍFICO (ATUALIZADA)
-// Permite que o novo responsável veja o histórico, mesmo que não tenha criado a nota.
+// ROTA PARA BUSCAR TODAS AS NOTAS (COM REGRAS DE CONSENTIMENTO)
 router.get('/:patientId', protect, isProfissional, async (req, res) => {
     const { patientId } = req.params;
     const { userId: professionalUserId } = req.user;
@@ -13,47 +12,51 @@ router.get('/:patientId', protect, isProfissional, async (req, res) => {
     try {
         conn = await pool.getConnection();
         const [profProfile] = await conn.query("SELECT id FROM professionals WHERE user_id = ?", [professionalUserId]);
-        if (!profProfile) {
-            return res.status(403).json({ message: 'Perfil de profissional não encontrado.' });
-        }
+        if (!profProfile) return res.status(403).json({ message: 'Perfil não encontrado.' });
+        
         const professionalId = profProfile.id;
 
-        // 1. VERIFICAÇÃO DE SEGURANÇA (VÍNCULO)
-        // Verifica se o profissional é o Criador, o Responsável ATUAL ou tem Agendamentos (histórico) com o paciente
+        // 1. Verify Basic Link
         const [link] = await conn.query(
-            `SELECT p.id FROM patients p
+            `SELECT p.id, p.notes_consent, p.previous_professional_id 
+             FROM patients p
              LEFT JOIN appointments a ON a.patient_id = p.id
              WHERE p.id = ? AND (
                 p.created_by_professional_id = ? 
                 OR p.responsible_professional_id = ? 
                 OR a.professional_id = ?
-             )
-             LIMIT 1`,
+             ) LIMIT 1`,
             [patientId, professionalId, professionalId, professionalId]
         );
 
-        if (!link) {
-            return res.status(403).json({ message: "Você não tem permissão para acessar as notas deste paciente." });
-        }
+        if (!link) return res.status(403).json({ message: "Sem permissão de acesso." });
 
-        // 2. BUSCA AS NOTAS (Histórico Completo)
-        // Removemos o filtro "AND professional_id = ?" para permitir ver o histórico de outros
-        // Fazemos JOIN com professionals para mostrar QUEM escreveu a nota antiga
+        const { notes_consent, previous_professional_id } = link;
+
+        // 2. Fetch Notes with Logic
+        // IF the note was created by another professional AND consent is NOT given -> Content is Hidden
         const notes = await conn.query(
             `SELECT 
-                n.*,
-                p.nome as professional_name 
+                n.id, 
+                n.created_at, 
+                n.professional_id,
+                p.nome as professional_name,
+                CASE 
+                    WHEN n.professional_id = ? THEN n.note_content
+                    WHEN ? = 1 THEN n.note_content -- notes_consent is TRUE
+                    ELSE 'CONTEÚDO BLOQUEADO: Aguardando autorização do autor anterior.' 
+                END as note_content
              FROM session_notes n
              LEFT JOIN professionals p ON n.professional_id = p.id
              WHERE n.patient_id = ? 
              ORDER BY n.created_at DESC`,
-            [patientId]
+            [professionalId, notes_consent, patientId]
         );
 
         res.json(notes);
     } catch (error) {
         console.error("Erro ao buscar notas:", error);
-        res.status(500).json({ message: 'Erro ao buscar notas do paciente.' });
+        res.status(500).json({ message: 'Erro ao buscar notas.' });
     } finally {
         if (conn) conn.release();
     }
