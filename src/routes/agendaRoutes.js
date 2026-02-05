@@ -1230,13 +1230,17 @@ router.get('/users-for-professional-agenda', protect, isProfissional, async (req
         const patientsRows = await conn.query(patientsQuery, [professionalId, professionalId]);
         
         // 3. Buscar empresas vinculadas a esses pacientes
-        const companiesRows = await conn.query(`
-            SELECT DISTINCT c.id, c.nome_empresa 
-            FROM companies c
-            JOIN patients p ON c.id = p.company_id
-            WHERE p.id IN (?)`, 
-            [patientsRows.map(p => p.id)]
-        );
+        let companiesRows = [];
+        if (patientsRows.length > 0) {
+            const patientIds = patientsRows.map(p => p.id);
+            companiesRows = await conn.query(`
+                SELECT DISTINCT c.id, c.nome_empresa 
+                FROM companies c
+                JOIN patients p ON c.id = p.company_id
+                WHERE p.id IN (?)`, 
+                [patientIds]
+            );
+        }
 
         res.json({
             professionals: [{id: professionalId, nome: 'Eu mesmo'}],
