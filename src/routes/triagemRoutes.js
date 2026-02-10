@@ -499,10 +499,12 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
         // Bloco de mapeamento de dados (profileData)
         let profileData = {};
         if (type === 'pacientes') {
+            const cleanCpf = triagemData.cpf ? triagemData.cpf.replace(/\D/g, '') : '';
+
             profileData = {
                 user_id: newUserId, 
                 nome: triagemData.nome_completo, 
-                cpf: triagemData.cpf,
+                cpf: cleanCpf.length > 0 ? cleanCpf : null,
                 genero: triagemData.genero,
                 data_nascimento: triagemData.data_nascimento, 
                 telefone: triagemData.telefone, 
@@ -518,7 +520,7 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
         } else if (type === 'profissionais') {
             const cleanCpf = triagemData.cpf ? triagemData.cpf.replace(/\D/g, '') : '';
             const cleanCnpj = triagemData.cnpj ? triagemData.cnpj.replace(/\D/g, '') : '';
-            
+
             profileData = {
                 user_id: newUserId, 
                 nome: triagemData.nome_completo, 
@@ -536,11 +538,18 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
                 level: triagemData.nivel_profissional === 'Estudante' ? 'Estagiário' : 'Profissional'
             };
         } else if (type === 'empresas') {
+            const cleanCnpj = triagemData.cnpj ? triagemData.cnpj.replace(/\D/g, '') : '';
+
              profileData = {
-                user_id: newUserId, nome_empresa: triagemData.nome_empresa, email_contato: triagemData.email, cnpj: triagemData.cnpj,
-                num_colaboradores: parseInt(triagemData.num_colaboradores, 10) || 0, nome_responsavel: triagemData.nome_responsavel,
+                user_id: newUserId, 
+                nome_empresa: triagemData.nome_empresa, 
+                email_contato: triagemData.email, 
+                cnpj: cleanCnpj.length > 0 ? cleanCnpj : null,
+                num_colaboradores: parseInt(triagemData.num_colaboradores, 10) || 0, 
+                nome_responsavel: triagemData.nome_responsavel,
                 cargo: triagemData.cargo_responsavel,
-                telefone: triagemData.telefone, descricao: triagemData.caracterizacao_demanda,
+                telefone: triagemData.telefone, 
+                descricao: triagemData.caracterizacao_demanda,
                 estado: triagemData.estado,
                 tipo_atendimento: JSON.stringify(triagemData.tipo_atendimento_desejado),
                 frequencia: triagemData.frequencia_desejada,
