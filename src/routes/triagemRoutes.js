@@ -516,12 +516,15 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
                 tipo_atendimento: JSON.stringify(triagemData.terapia_buscada)
             };
         } else if (type === 'profissionais') {
+            const cleanCpf = triagemData.cpf ? triagemData.cpf.replace(/\D/g, '') : '';
+            const cleanCnpj = triagemData.cnpj ? triagemData.cnpj.replace(/\D/g, '') : '';
+            
             profileData = {
                 user_id: newUserId, 
                 nome: triagemData.nome_completo, 
                 email: triagemData.email, 
-                cpf: triagemData.cpf ? triagemData.cpf.replace(/\D/g, '') : null, 
-                cnpj: triagemData.cnpj ? triagemData.cnpj.replace(/\D/g, '') : null,
+                cpf: cleanCpf.length > 0 ? cleanCpf : null, 
+                cnpj: cleanCnpj.length > 0 ? cleanCnpj : null,
                 data_nascimento: triagemData.data_nascimento, 
                 endereco: triagemData.endereco,
                 cidade: triagemData.cidade, 
