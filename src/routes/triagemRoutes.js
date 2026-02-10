@@ -563,6 +563,31 @@ router.post('/confirm/:type/:id', protect, isAdmin, async (req, res) => {
 
         await conn.query(`INSERT INTO ${targetTable} (${fields.join(',')}) VALUES (${placeholders})`, values);
         
+        // Prepara os dados para o histórico
+        let roleHistory = '';
+        let nomeHistory = '';
+        
+        if (type === 'pacientes') {
+            roleHistory = 'Paciente';
+            nomeHistory = triagemData.nome_completo;
+        } else if (type === 'profissionais') {
+            roleHistory = 'Profissional';
+            nomeHistory = triagemData.nome_completo;
+        } else if (type === 'empresas') {
+            roleHistory = 'Empresa';
+            nomeHistory = triagemData.nome_empresa;
+        }
+
+        const emailHistory = triagemData.email; 
+        const telefoneHistory = triagemData.telefone;
+
+        // Executa o INSERT na tabela de histórico
+        await conn.query(
+            "INSERT INTO historico_triagem (nome_usuario, email_usuario, telefone_usuario, role_usuario, status_final, data_migracao) VALUES (?, ?, ?, ?, 'Confirmado', NOW())",
+            [nomeHistory, emailHistory, telefoneHistory, roleHistory]
+        );
+
+        
         await conn.query(`DELETE FROM ${sourceTable} WHERE id = ?`, [id]);
 
         await conn.commit();
